@@ -1,0 +1,257 @@
+<section class="ui-page ui-page--wide customers-page">
+  <header class="ui-hero">
+    <div>
+      <span class="ui-kicker">Customer quality</span>
+      <h1 class="ui-title">Customers</h1>
+      <p class="ui-subtitle">
+        Inspect customer records, contact completeness and email quality signals imported from connected sources.
+      </p>
+    </div>
+
+    <div class="ui-hero-actions">
+      <button class="ui-button" type="button" (click)="loadCustomers()" [disabled]="loading">Refresh</button>
+    </div>
+  </header>
+
+  @if (errorMessage) {
+    <div class="ui-error" role="alert">{{ errorMessage }}</div>
+  }
+
+  <div class="customers-tabs" role="tablist" aria-label="Customer workspace">
+    <button type="button" class="customers-tabs__tab" [class.customers-tabs__tab--active]="activeTab === 'list'" (click)="setActiveTab('list')">
+      Customer list
+    </button>
+    <button type="button" class="customers-tabs__tab" [class.customers-tabs__tab--active]="activeTab === 'insights'" (click)="setActiveTab('insights')">
+      Insights
+    </button>
+  </div>
+
+  @if (activeTab === 'list') {
+    <div class="ui-grid ui-grid--metrics" *ngIf="analytics && !loadingAnalytics">
+      <article class="ui-card ui-metric">
+        <div class="ui-metric__label">Total customers</div>
+        <div class="ui-metric__value">{{ analytics.total | number }}</div>
+        <div class="ui-metric__meta">Known contact records</div>
+      </article>
+      <article class="ui-card ui-metric ui-metric--success">
+        <div class="ui-metric__label">With phone</div>
+        <div class="ui-metric__value">{{ analytics.withPhone | number }}</div>
+        <div class="ui-metric__meta">{{ analytics.total ? ((analytics.withPhone / analytics.total) * 100).toFixed(1) : 0 }}% reachable</div>
+      </article>
+      <article class="ui-card ui-metric ui-metric--info">
+        <div class="ui-metric__label">Full profile</div>
+        <div class="ui-metric__value">{{ analytics.fullProfile | number }}</div>
+        <div class="ui-metric__meta">Name, email, phone, location</div>
+      </article>
+      <article class="ui-card ui-metric ui-metric--warning">
+        <div class="ui-metric__label">Avg email quality</div>
+        <div class="ui-metric__value">{{ analytics.averageEmailQuality?.toFixed(1) || '0.0' }}</div>
+        <div class="ui-metric__meta">Score out of 100</div>
+      </article>
+    </div>
+
+    <div class="ui-toolbar">
+      <div class="ui-toolbar__filters">
+        <label class="ui-field">
+          <span class="ui-label">Search</span>
+          <input
+            type="text"
+            class="ui-input"
+            placeholder="Name, email or phone"
+            [value]="searchTerm"
+            (input)="onSearchInput($any($event.target).value)"
+          />
+        </label>
+
+        <label class="ui-field">
+          <span class="ui-label">City</span>
+          <input
+            type="text"
+            class="ui-input customers-page__city"
+            placeholder="Filter by city"
+            [(ngModel)]="cityFilter"
+            (change)="onFilterChange()"
+          />
+        </label>
+      </div>
+    </div>
+
+    @if (loading) {
+      <div class="ui-loading">
+        <div>
+          <div class="ui-spinner"></div>
+          Loading customers...
+        </div>
+      </div>
+    } @else if (customers.length === 0) {
+      <div class="ui-empty">No customers found for the current filters.</div>
+    } @else {
+      <div class="ui-table-wrap customers-page__table">
+        <table class="ui-table">
+          <thead>
+            <tr>
+              <th>
+                <button class="customers-page__sort" type="button" (click)="onSort('name')">
+                  Name <span *ngIf="sortBy === 'name'">{{ sortOrder === 'ASC' ? '↑' : '↓' }}</span>
+                </button>
+              </th>
+              <th>
+                <button class="customers-page__sort" type="button" (click)="onSort('email')">
+                  Email <span *ngIf="sortBy === 'email'">{{ sortOrder === 'ASC' ? '↑' : '↓' }}</span>
+                </button>
+              </th>
+              <th>
+                <button class="customers-page__sort" type="button" (click)="onSort('phone')">
+                  Phone <span *ngIf="sortBy === 'phone'">{{ sortOrder === 'ASC' ? '↑' : '↓' }}</span>
+                </button>
+              </th>
+              <th>
+                <button class="customers-page__sort" type="button" (click)="onSort('city')">
+                  City <span *ngIf="sortBy === 'city'">{{ sortOrder === 'ASC' ? '↑' : '↓' }}</span>
+                </button>
+              </th>
+              <th>
+                <button class="customers-page__sort" type="button" (click)="onSort('createdAt')">
+                  Created <span *ngIf="sortBy === 'createdAt'">{{ sortOrder === 'ASC' ? '↑' : '↓' }}</span>
+                </button>
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let customer of customers; trackBy: trackCustomer">
+              <td>
+                <div class="ui-table__primary">{{ getFullName(customer) }}</div>
+                <div class="ui-table__muted">#{{ customer.id }}</div>
+              </td>
+              <td class="ui-table__ellipsis">{{ customer.email }}</td>
+              <td class="ui-table__muted">{{ customer.phone || '-' }}</td>
+              <td>
+                @if (customer.city) {
+                  <span class="ui-badge ui-badge--info">{{ customer.city }}</span>
+                } @else {
+                  <span class="ui-table__muted">-</span>
+                }
+              </td>
+              <td class="ui-table__muted">{{ customer.created_at | date:'short' }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    }
+
+    <div class="ui-pagination" *ngIf="!loading && totalPages > 1">
+      <button class="ui-button ui-button--sm" type="button" [disabled]="currentPage === 1" (click)="onPageChange(currentPage - 1)">
+        Previous
+      </button>
+      <button
+        *ngFor="let page of getPages()"
+        class="ui-button ui-button--sm"
+        type="button"
+        [ngClass]="page === currentPage ? 'ui-button--primary' : ''"
+        (click)="onPageChange(page)"
+      >
+        {{ page }}
+      </button>
+      <button class="ui-button ui-button--sm" type="button" [disabled]="currentPage === totalPages" (click)="onPageChange(currentPage + 1)">
+        Next
+      </button>
+      <span class="ui-pagination__info">Page {{ currentPage }} of {{ totalPages }}</span>
+    </div>
+  }
+
+  @if (activeTab === 'insights') {
+    <div class="ui-grid ui-grid--two">
+      <article class="ui-card" *ngIf="emailQuality">
+        <div class="ui-card__header">
+          <div>
+            <h2 class="ui-card__title">Email quality</h2>
+            <p class="ui-card__subtitle">Customer email status distribution</p>
+          </div>
+        </div>
+        <div class="ui-card__body customers-page__bars">
+          <div class="customers-page__bar" *ngFor="let status of ['valid', 'risky', 'invalid', 'pending', 'disposable', 'roleBased']">
+            <span>{{ status }}</span>
+            <div class="ui-progress">
+              <div class="ui-progress__bar" [style.width.%]="getQualityPercentage(status)"></div>
+            </div>
+            <strong>{{ getQualityPercentage(status).toFixed(1) }}%</strong>
+          </div>
+        </div>
+      </article>
+
+      <article class="ui-card" *ngIf="contactCompleteness">
+        <div class="ui-card__header">
+          <div>
+            <h2 class="ui-card__title">Contact completeness</h2>
+            <p class="ui-card__subtitle">How complete the CRM records are</p>
+          </div>
+        </div>
+        <div class="ui-card__body customers-page__completeness">
+          <div>
+            <span>Full profile</span>
+            <strong>{{ contactCompleteness.fullProfile | number }}</strong>
+            <small>{{ getCompletenessPercentage('fullProfile').toFixed(1) }}%</small>
+          </div>
+          <div>
+            <span>Email + name</span>
+            <strong>{{ contactCompleteness.emailAndName | number }}</strong>
+            <small>{{ getCompletenessPercentage('emailAndName').toFixed(1) }}%</small>
+          </div>
+          <div>
+            <span>Email only</span>
+            <strong>{{ contactCompleteness.emailOnly | number }}</strong>
+            <small>{{ getCompletenessPercentage('emailOnly').toFixed(1) }}%</small>
+          </div>
+        </div>
+      </article>
+    </div>
+
+    <div class="ui-grid ui-grid--two">
+      <article class="ui-card" *ngIf="emailDomains && emailDomains.length > 0">
+        <div class="ui-card__header">
+          <div>
+            <h2 class="ui-card__title">Top domains</h2>
+            <p class="ui-card__subtitle">Largest customer email domains</p>
+          </div>
+        </div>
+        <div class="ui-card__body customers-page__domains">
+          <div *ngFor="let domain of emailDomains" [class.customers-page__domain--typo]="domain.isSuspectedTypo">
+            <strong>{{ domain.domain }}</strong>
+            <span>{{ domain.count | number }}</span>
+            <small>{{ domain.percentage.toFixed(1) }}%</small>
+            @if (domain.isSuspectedTypo) {
+              <small class="customers-page__domain-warning">Typo? {{ domain.suggestedDomain }}</small>
+            }
+          </div>
+        </div>
+      </article>
+
+      <article class="ui-card" *ngIf="riskAssessment">
+        <div class="ui-card__header">
+          <div>
+            <h2 class="ui-card__title">Risk assessment</h2>
+            <p class="ui-card__subtitle">Contacts requiring caution</p>
+          </div>
+        </div>
+        <div class="ui-card__body customers-page__completeness">
+          <div>
+            <span>Disposable</span>
+            <strong>{{ riskAssessment.disposableEmails | number }}</strong>
+          </div>
+          <div>
+            <span>Role-based</span>
+            <strong>{{ riskAssessment.roleBasedEmails | number }}</strong>
+          </div>
+          <div>
+            <span>Invalid</span>
+            <strong>{{ riskAssessment.invalidEmails | number }}</strong>
+          </div>
+          <div>
+            <span>Total risky</span>
+            <strong>{{ riskAssessment.totalRisky | number }}</strong>
+          </div>
+        </div>
+      </article>
+    </div>
+  }
+</section>

@@ -1,0 +1,539 @@
+<section class="ui-page ui-page--wide import-page">
+  <header class="ui-hero">
+    <div>
+      <span class="ui-kicker">Data ingestion</span>
+      <h1 class="ui-title">Import & Quality</h1>
+      <p class="ui-subtitle">
+        Bring customers from SuppliKit, WooCommerce and historical files while filtering test addresses before they reach sending lists.
+      </p>
+    </div>
+
+    <div class="ui-hero-actions">
+      <button class="ui-button" type="button" (click)="refreshImportPage()" [disabled]="loading">Refresh</button>
+    </div>
+  </header>
+
+  @if (errorMessage) {
+    <div class="ui-error" role="alert">{{ errorMessage }}</div>
+  }
+
+  @if (actionMessage) {
+    <div class="import-page__notice">{{ actionMessage }}</div>
+  }
+
+  @if (loading) {
+    <div class="ui-loading">
+      <div>
+        <div class="ui-spinner"></div>
+        Loading import sources...
+      </div>
+    </div>
+  } @else {
+    <div class="ui-grid ui-grid--metrics">
+      <article class="ui-card ui-metric">
+        <div class="ui-metric__label">Recent sync orders</div>
+        <div class="ui-metric__value">{{ overview.recentOrders | number }}</div>
+        <div class="ui-metric__meta">Last {{ daysBack }} days in SuppliKit</div>
+      </article>
+
+      <article class="ui-card ui-metric ui-metric--success">
+        <div class="ui-metric__label">Unique customer emails</div>
+        <div class="ui-metric__value">{{ overview.uniqueEmails | number }}</div>
+        <div class="ui-metric__meta">Candidates for import</div>
+      </article>
+
+      <article class="ui-card ui-metric ui-metric--info">
+        <div class="ui-metric__label">Active jobs</div>
+        <div class="ui-metric__value">{{ getRunningJobs() | number }}</div>
+        <div class="ui-metric__meta">Pending or running imports</div>
+      </article>
+
+      <article class="ui-card ui-metric" [ngClass]="getFailedJobs() > 0 ? 'ui-metric--danger' : 'ui-metric--warning'">
+        <div class="ui-metric__label">Failed jobs</div>
+        <div class="ui-metric__value">{{ getFailedJobs() | number }}</div>
+        <div class="ui-metric__meta">{{ getCompletedJobs() | number }} completed jobs</div>
+      </article>
+    </div>
+
+    <div class="import-page__source-grid">
+      <article class="ui-card import-source import-source--primary">
+        <div class="ui-card__header">
+          <div>
+            <h2 class="ui-card__title">SuppliKit live orders</h2>
+            <p class="ui-card__subtitle">Primary import path for customers as new synced orders appear</p>
+          </div>
+          <span class="ui-badge" [ngClass]="overview.configured ? 'ui-badge--success' : 'ui-badge--warning'">
+            {{ overview.configured ? 'Configured' : 'Needs env' }}
+          </span>
+          <span class="ui-badge" [ngClass]="overview.autoImportEnabled ? 'ui-badge--info' : 'ui-badge--muted'">
+            Auto {{ overview.autoImportEnabled ? 'on' : 'off' }}
+          </span>
+        </div>
+        <div class="ui-card__body">
+          <p class="import-source__copy">
+            Reads recent orders from the SuppliKit sync database, deduplicates by email, creates or updates customers,
+            creates missing email records and links existing emails to customers.
+          </p>
+
+          <div class="import-source__controls">
+            <label class="ui-field">
+              <span class="ui-label">Days back</span>
+              <input class="ui-input import-source__number" type="number" min="1" max="365" [(ngModel)]="daysBack" />
+            </label>
+
+            <label class="ui-field">
+              <span class="ui-label">Limit</span>
+              <input class="ui-input import-source__number" type="number" min="1" max="50000" [(ngModel)]="limit" />
+            </label>
+          </div>
+
+          <div class="import-source__meta">
+            <span>Newest order</span>
+            <strong>{{ overview.newestOrderDate ? (overview.newestOrderDate | date:'short') : 'No recent orders' }}</strong>
+          </div>
+
+          <div class="import-source__sync">
+            <div class="import-source__sync-head">
+              <span>Sync health</span>
+              <strong class="ui-badge" [ngClass]="getSyncStateBadgeClass()">
+                {{ overview.syncState?.status || 'idle' }}
+              </strong>
+            </div>
+            <div class="import-source__sync-grid">
+              <div>
+                <span>Last success</span>
+                <strong>{{ overview.syncState?.lastSuccessfulSyncAt ? (overview.syncState?.lastSuccessfulSyncAt | date:'short') : '-' }}</strong>
+              </div>
+              <div>
+                <span>Last order</span>
+                <strong>{{ overview.syncState?.lastOrderDate ? (overview.syncState?.lastOrderDate | date:'short') : '-' }}</strong>
+              </div>
+              <div>
+                <span>Next window</span>
+                <strong>{{ getEffectiveSuppliKitDaysBack() }} days</strong>
+              </div>
+            </div>
+          </div>
+
+          <button
+            class="ui-button ui-button--primary"
+            type="button"
+            (click)="startInventoryPalImport()"
+            [disabled]="!overview.configured || actionLoading === 'inventorypal'"
+          >
+            @if (actionLoading === 'inventorypal') {
+              <span class="ui-spinner ui-spinner--button" aria-hidden="true"></span>
+              Starting
+            } @else {
+              Import new customers
+            }
+          </button>
+        </div>
+      </article>
+
+      <article class="ui-card import-source">
+        <div class="ui-card__header">
+          <div>
+            <h2 class="ui-card__title">WooCommerce domains</h2>
+            <p class="ui-card__subtitle">Existing direct import from configured stores</p>
+          </div>
+        </div>
+        <div class="ui-card__body">
+          <label class="ui-field">
+            <span class="ui-label">Domain</span>
+            <select class="ui-select" [(ngModel)]="selectedDomainId">
+              <option value="">All active domains</option>
+              <option *ngFor="let domain of domains" [value]="domain.id">
+                {{ domain.display_name || domain.domain_name }}
+              </option>
+            </select>
+          </label>
+          <button
+            class="ui-button"
+            type="button"
+            (click)="startWooCommerceImport()"
+            [disabled]="actionLoading === 'woocommerce'"
+          >
+            Import WooCommerce
+          </button>
+        </div>
+      </article>
+
+      <article class="ui-card import-source">
+        <div class="ui-card__header">
+          <div>
+            <h2 class="ui-card__title">File imports</h2>
+            <p class="ui-card__subtitle">Configured server paths for historical data</p>
+          </div>
+        </div>
+        <div class="ui-card__body import-source__split-actions">
+          <button class="ui-button" type="button" (click)="startCsvImport()" [disabled]="actionLoading === 'csv'">
+            CSV import
+          </button>
+          <button class="ui-button" type="button" (click)="startJsonImport()" [disabled]="actionLoading === 'json'">
+            JSON pages
+          </button>
+        </div>
+      </article>
+    </div>
+
+    <article class="ui-card recoverable-audit">
+      <div class="ui-card__header recoverable-audit__header">
+        <div>
+          <h2 class="ui-card__title">Email recovery & quality gate</h2>
+          <p class="ui-card__subtitle">High-confidence matches are auto-recovered; review rows can be recovered manually or marked as test/ignored</p>
+        </div>
+        <span class="ui-badge" [ngClass]="recoverableAudit.configured ? 'ui-badge--success' : 'ui-badge--warning'">
+          {{ recoverableAudit.configured ? recoverableAudit.source : 'Needs source' }}
+        </span>
+      </div>
+
+      <div class="ui-card__body">
+        <div class="recoverable-audit__controls">
+          <label class="ui-field">
+            <span class="ui-label">Days back</span>
+            <input class="ui-input import-source__number" type="number" min="1" max="3650" [(ngModel)]="recoverableDaysBack" />
+          </label>
+
+          <label class="ui-field">
+            <span class="ui-label">Limit</span>
+            <input class="ui-input import-source__number" type="number" min="1" max="5000" [(ngModel)]="recoverableLimit" />
+          </label>
+
+          <label class="ui-field">
+            <span class="ui-label">SuppliKit domain ID</span>
+            <input class="ui-input import-source__number" type="number" min="1" placeholder="All" [(ngModel)]="recoverableDomainId" />
+          </label>
+
+          <div class="recoverable-audit__quick-filters" aria-label="SuppliKit domain quick filters">
+            <button class="ui-button ui-button--sm" type="button" (click)="setRecoverableDomain('')">All</button>
+            <button class="ui-button ui-button--sm" type="button" (click)="setRecoverableDomain('1')">D1 Primary</button>
+            <button class="ui-button ui-button--sm" type="button" (click)="setRecoverableDomain('4')">D4</button>
+            <button class="ui-button ui-button--sm" type="button" (click)="setRecoverableDomain('8')">D8</button>
+            <button class="ui-button ui-button--sm" type="button" (click)="setRecoverableDomain('9')">D9 Shopify</button>
+          </div>
+
+          <label class="ui-field">
+            <span class="ui-label">Confidence</span>
+            <select class="ui-select recoverable-audit__confidence" [(ngModel)]="recoverableConfidenceFilter">
+              <option value="">All</option>
+              <option value="high">High</option>
+              <option value="review">Review</option>
+            </select>
+          </label>
+
+          <label class="ui-field recoverable-audit__search">
+            <span class="ui-label">Search</span>
+            <input class="ui-input" type="search" [(ngModel)]="recoverableSearchTerm" />
+          </label>
+
+          <button
+            class="ui-button"
+            type="button"
+            (click)="loadRecoverableAudit()"
+            [disabled]="recoverableLoading"
+          >
+            @if (recoverableLoading) {
+              <span class="ui-spinner ui-spinner--button" aria-hidden="true"></span>
+              Checking
+            } @else {
+              Refresh audit
+            }
+          </button>
+
+          <button
+            class="ui-button"
+            type="button"
+            (click)="exportRecoverableCsv()"
+            [disabled]="recoverableLoading || getFilteredRecoverableRows().length === 0"
+          >
+            Export CSV
+          </button>
+
+          <button
+            class="ui-button"
+            type="button"
+            (click)="startRecoverableRecovery(true)"
+            [disabled]="recoverableLoading || recoverableRecoveryLoading !== ''"
+          >
+            @if (recoverableRecoveryLoading === 'dryRun') {
+              <span class="ui-spinner ui-spinner--button" aria-hidden="true"></span>
+              Previewing
+            } @else {
+              Preview recovery
+            }
+          </button>
+
+          <button
+            class="ui-button ui-button--primary"
+            type="button"
+            (click)="startRecoverableRecovery(false)"
+            [disabled]="recoverableLoading || recoverableRecoveryLoading !== ''"
+          >
+            @if (recoverableRecoveryLoading === 'apply') {
+              <span class="ui-spinner ui-spinner--button" aria-hidden="true"></span>
+              Applying
+            } @else {
+              Apply high-confidence
+            }
+          </button>
+        </div>
+
+        <div class="recoverable-audit__metrics">
+          <div>
+            <span>Auto / recovered</span>
+            <strong>{{ getAutoQueueRowsCount() | number }}</strong>
+          </div>
+          <div>
+            <span>Needs review</span>
+            <strong>{{ getReviewQueueRowsCount() | number }}</strong>
+          </div>
+          <div>
+            <span>Ignored / test</span>
+            <strong>{{ getIgnoredQueueRowsCount() | number }}</strong>
+          </div>
+          <div>
+            <span>Recoverable</span>
+            <strong>{{ recoverableAudit.recoverableOrders | number }}</strong>
+          </div>
+          <div>
+            <span>Audit recovered</span>
+            <strong>{{ recoverableAudit.alreadyRecoveredOrders | number }}</strong>
+          </div>
+          <div>
+            <span>Loaded rows</span>
+            <strong>{{ getLoadedRecoverableRowsCount() | number }}</strong>
+          </div>
+          <div>
+            <span>High / review</span>
+            <strong>{{ getHighConfidenceRowsCount() | number }} / {{ getReviewRowsCount() | number }}</strong>
+          </div>
+        </div>
+
+        @if (isRecoverableAuditPartial()) {
+          <div class="recoverable-audit__notice">
+            Showing {{ getLoadedRecoverableRowsCount() | number }} of {{ recoverableAudit.recoverableOrders | number }} recoverable rows. Increase the limit and refresh to inspect the full queue.
+          </div>
+        }
+
+        <div class="recoverable-audit__queues" role="tablist" aria-label="Recovery queues">
+          <button
+            class="recoverable-audit__queue"
+            type="button"
+            [class.recoverable-audit__queue--active]="recoverableQueue === 'review'"
+            (click)="setRecoverableQueue('review')"
+          >
+            Review
+            <strong>{{ getReviewQueueRowsCount() | number }}</strong>
+          </button>
+          <button
+            class="recoverable-audit__queue"
+            type="button"
+            [class.recoverable-audit__queue--active]="recoverableQueue === 'auto'"
+            (click)="setRecoverableQueue('auto')"
+          >
+            Auto
+            <strong>{{ getAutoQueueRowsCount() | number }}</strong>
+          </button>
+          <button
+            class="recoverable-audit__queue"
+            type="button"
+            [class.recoverable-audit__queue--active]="recoverableQueue === 'ignored'"
+            (click)="setRecoverableQueue('ignored')"
+          >
+            Ignored
+            <strong>{{ getIgnoredQueueRowsCount() | number }}</strong>
+          </button>
+          <button
+            class="recoverable-audit__queue"
+            type="button"
+            [class.recoverable-audit__queue--active]="recoverableQueue === 'all'"
+            (click)="setRecoverableQueue('all')"
+          >
+            All
+            <strong>{{ getLoadedRecoverableRowsCount() | number }}</strong>
+          </button>
+        </div>
+
+        @if (recoverableRecoveryResult) {
+          <div class="recoverable-audit__recovery-summary">
+            <div>
+              <span>{{ recoverableRecoveryResult.dryRun ? 'Preview candidates' : 'Applied candidates' }}</span>
+              <strong>{{ recoverableRecoveryResult.candidates | number }}</strong>
+            </div>
+            <div>
+              <span>Customers create/update</span>
+              <strong>{{ recoverableRecoveryResult.customersCreated | number }} / {{ recoverableRecoveryResult.customersUpdated | number }}</strong>
+            </div>
+            <div>
+              <span>Emails create/link</span>
+              <strong>{{ recoverableRecoveryResult.emailsCreated | number }} / {{ recoverableRecoveryResult.emailsLinked | number }}</strong>
+            </div>
+            <div>
+              <span>Sources new/duplicate</span>
+              <strong>{{ recoverableRecoveryResult.sourcesCreated | number }} / {{ recoverableRecoveryResult.duplicateSources | number }}</strong>
+            </div>
+            <div>
+              <span>Skipped review/invalid/recovered</span>
+              <strong>
+                {{ recoverableRecoveryResult.skippedReview | number }} /
+                {{ recoverableRecoveryResult.skippedInvalid | number }} /
+                {{ recoverableRecoveryResult.skippedAlreadyRecovered | number }}
+              </strong>
+            </div>
+          </div>
+        }
+
+        @if (recoverableLoading) {
+          <div class="ui-loading recoverable-audit__loading">
+            <div>
+              <div class="ui-spinner"></div>
+              Checking recoverable emails...
+            </div>
+          </div>
+        } @else if (getFilteredRecoverableRows().length > 0) {
+          <div class="ui-table-wrap recoverable-audit__table">
+            <table class="ui-table">
+              <thead>
+                <tr>
+                  <th>Order</th>
+                  <th>Domain</th>
+                  <th>Phone</th>
+                  <th>Matched email</th>
+                  <th>Matched domain</th>
+                  <th>Match</th>
+                  <th>Last signal</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr *ngFor="let row of getFilteredRecoverableRows(); trackBy: trackRecoverableRow">
+                  <td>
+                    <div class="ui-table__primary">#{{ row.orderNumber || row.orderId }}</div>
+                    <div class="ui-table__muted">{{ row.customerName || 'No customer name' }}</div>
+                  </td>
+                  <td>
+                    <div>{{ getDomainLabel(row) }}</div>
+                    <div class="ui-table__muted">{{ row.orderDate ? (row.orderDate | date:'shortDate') : '-' }}</div>
+                  </td>
+                  <td>
+                    <div>{{ row.phone }}</div>
+                    <div class="ui-table__muted">{{ row.normalizedPhone }}</div>
+                  </td>
+                  <td>
+                    <div class="ui-table__primary">{{ row.candidateEmail }}</div>
+                    <div class="ui-table__muted">{{ row.candidateName || '-' }}</div>
+                    @if (row.candidateEmailInList) {
+                      <span class="ui-badge ui-badge--info">in list</span>
+                      @if (row.candidateEmailStatus) {
+                        <span class="ui-table__muted">{{ row.candidateEmailStatus }}</span>
+                      }
+                    }
+                  </td>
+                  <td>
+                    <div>{{ getCandidateDomainLabel(row) }}</div>
+                    <div class="ui-table__muted">Domain {{ row.candidateDomainId || '-' }}</div>
+                  </td>
+                  <td>
+                    <span class="ui-badge" [ngClass]="getRecoverableConfidenceClass(row.confidence)">
+                      {{ row.confidence }}
+                    </span>
+                    @if (row.alreadyRecovered) {
+                      <span class="ui-badge ui-badge--info">recovered</span>
+                    }
+                    <div class="ui-table__muted">{{ row.candidateEmailsForPhone }} email / {{ row.candidateOrdersForPhone }} orders</div>
+                  </td>
+                  <td class="ui-table__muted">
+                    {{ row.candidateOrderDate ? (row.candidateOrderDate | date:'short') : '-' }}
+                  </td>
+                  <td>
+                    <div class="ui-table__actions">
+                      @if (row.confidence === 'review' && !row.alreadyRecovered) {
+                        <button
+                          class="ui-button ui-button--sm"
+                          type="button"
+                          (click)="recoverReviewRow(row)"
+                          [disabled]="recoverableRowActionLoading !== ''"
+                        >
+                          @if (recoverableRowActionLoading === 'recover-' + row.orderId) {
+                            <span class="ui-spinner ui-spinner--button" aria-hidden="true"></span>
+                            Recovering
+                          } @else {
+                            Recover
+                          }
+                        </button>
+                      }
+                      @if (!row.alreadyRecovered) {
+                        <button
+                          class="ui-button ui-button--sm ui-button--danger"
+                          type="button"
+                          (click)="markRecoverableAsTest(row)"
+                          [disabled]="recoverableRowActionLoading !== ''"
+                        >
+                          @if (recoverableRowActionLoading === 'test-' + row.orderId) {
+                            <span class="ui-spinner ui-spinner--button" aria-hidden="true"></span>
+                            Marking
+                          } @else {
+                            Mark test
+                          }
+                        </button>
+                      }
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        } @else {
+          <div class="ui-empty">No recoverable missing emails for the selected window.</div>
+        }
+      </div>
+    </article>
+
+    <article class="ui-card">
+      <div class="ui-card__header">
+        <div>
+          <h2 class="ui-card__title">Import jobs</h2>
+          <p class="ui-card__subtitle">Latest background jobs and results</p>
+        </div>
+      </div>
+
+      <div class="ui-card__body">
+        @if (jobs.length > 0) {
+          <div class="ui-table-wrap import-page__jobs">
+            <table class="ui-table">
+              <thead>
+                <tr>
+                  <th>Job</th>
+                  <th>Source</th>
+                  <th>Status</th>
+                  <th>Imported</th>
+                  <th>Duplicates</th>
+                  <th>Created</th>
+                  <th>Completed</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr *ngFor="let job of jobs; trackBy: trackJob">
+                  <td class="ui-table__primary">#{{ job.id }}</td>
+                  <td>{{ job.sourceType }}</td>
+                  <td>
+                    <span class="ui-badge" [ngClass]="getStatusBadgeClass(job.status)">
+                      {{ job.status }}
+                    </span>
+                  </td>
+                  <td>{{ job.importedEmails | number }}</td>
+                  <td>{{ job.duplicateEmails | number }}</td>
+                  <td class="ui-table__muted">{{ job.createdAt | date:'short' }}</td>
+                  <td class="ui-table__muted">{{ job.completedAt ? (job.completedAt | date:'short') : '-' }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        } @else {
+          <div class="ui-empty">No import jobs yet.</div>
+        }
+      </div>
+    </article>
+  }
+</section>

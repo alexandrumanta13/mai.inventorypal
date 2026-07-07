@@ -1,0 +1,944 @@
+<section class="ui-page ui-page--wide emails-page">
+  <header class="ui-hero">
+    <div>
+      <span class="ui-kicker">Email intelligence</span>
+      <h1 class="ui-title">Emails</h1>
+      <p class="ui-subtitle">
+        Review imported emails, queue selected records for verification and isolate risky contacts before campaigns.
+      </p>
+    </div>
+
+    <div class="ui-hero-actions">
+      <button class="ui-button" type="button" (click)="loadEmails()" [disabled]="loading">Refresh</button>
+      <button
+        class="ui-button ui-button--primary"
+        type="button"
+        (click)="verifySelected()"
+        [disabled]="getSelectedCount() === 0"
+      >
+        Verify selected {{ getSelectedCount() ? '(' + getSelectedCount() + ')' : '' }}
+      </button>
+    </div>
+  </header>
+
+  @if (errorMessage) {
+    <div class="ui-error" role="alert">{{ errorMessage }}</div>
+  }
+
+  @if (actionMessage) {
+    <div class="emails-page__notice">{{ actionMessage }}</div>
+  }
+
+  <div class="emails-tabs" role="tablist" aria-label="Email workspace">
+    <button type="button" [class.emails-tabs__tab--active]="activeTab === 'list'" class="emails-tabs__tab" (click)="setActiveTab('list')">
+      List
+    </button>
+    <button type="button" [class.emails-tabs__tab--active]="activeTab === 'analytics'" class="emails-tabs__tab" (click)="setActiveTab('analytics')">
+      Analytics
+    </button>
+    <button type="button" [class.emails-tabs__tab--active]="activeTab === 'risk'" class="emails-tabs__tab" (click)="setActiveTab('risk')">
+      Risk review
+    </button>
+    <button type="button" [class.emails-tabs__tab--active]="activeTab === 'typos'" class="emails-tabs__tab" (click)="setActiveTab('typos')">
+      Typo recovery
+    </button>
+    <button type="button" [class.emails-tabs__tab--active]="activeTab === 'validation'" class="emails-tabs__tab" (click)="setActiveTab('validation')">
+      Validation
+    </button>
+  </div>
+
+  @if (activeTab === 'list') {
+    <div class="ui-grid ui-grid--metrics" *ngIf="analytics && !loadingAnalytics">
+      <article class="ui-card ui-metric">
+        <div class="ui-metric__label">Total emails</div>
+        <div class="ui-metric__value">{{ analytics.total | number }}</div>
+        <div class="ui-metric__meta">Imported records</div>
+      </article>
+      <article class="ui-card ui-metric ui-metric--success">
+        <div class="ui-metric__label">With customers</div>
+        <div class="ui-metric__value">{{ analytics.withCustomers | number }}</div>
+        <div class="ui-metric__meta">{{ analytics.total ? ((analytics.withCustomers / analytics.total) * 100).toFixed(1) : 0 }}% linked</div>
+      </article>
+      <article class="ui-card ui-metric ui-metric--warning">
+        <div class="ui-metric__label">Without customers</div>
+        <div class="ui-metric__value">{{ analytics.withoutCustomers | number }}</div>
+        <div class="ui-metric__meta">Needs matching review</div>
+      </article>
+      <article class="ui-card ui-metric ui-metric--info">
+        <div class="ui-metric__label">Avg score</div>
+        <div class="ui-metric__value">{{ analytics.averageQualityScore?.toFixed(1) || '0.0' }}</div>
+        <div class="ui-metric__meta">Quality out of 100</div>
+      </article>
+    </div>
+
+    <div class="ui-toolbar">
+      <div class="ui-toolbar__filters">
+        <label class="ui-field">
+          <span class="ui-label">Search</span>
+          <input
+            type="text"
+            class="ui-input"
+            placeholder="Search email or contact"
+            [value]="searchTerm"
+            (input)="onSearchInput($any($event.target).value)"
+          />
+        </label>
+
+        <label class="ui-field">
+          <span class="ui-label">Status</span>
+          <select class="ui-select" [(ngModel)]="statusFilter" (change)="onFilterChange()">
+            <option value="">All statuses</option>
+            <option value="pending">Pending</option>
+            <option value="valid">Valid</option>
+            <option value="invalid">Invalid</option>
+            <option value="risky">Risky</option>
+            <option value="disposable">Disposable</option>
+            <option value="unsubscribed">Unsubscribed</option>
+          </select>
+        </label>
+
+        <label class="ui-field">
+          <span class="ui-label">Domain</span>
+          <select class="ui-select" [(ngModel)]="domainFilter" (change)="onFilterChange()">
+            <option value="">All domains</option>
+            <option *ngFor="let domain of emailDomains" [value]="domain">{{ domain }}</option>
+          </select>
+        </label>
+
+        <label class="ui-field">
+          <span class="ui-label">Send gate</span>
+          <select class="ui-select" [(ngModel)]="sendEligibilityFilter" (change)="onFilterChange()">
+            <option value="">All eligibility</option>
+            <option *ngFor="let option of sendEligibilityOptions" [value]="option.value">{{ option.label }}</option>
+          </select>
+        </label>
+
+        <label class="ui-field">
+          <span class="ui-label">Reason</span>
+          <select class="ui-select" [(ngModel)]="doNotSendReasonFilter" (change)="onFilterChange()">
+            <option value="">All reasons</option>
+            <option *ngFor="let reason of doNotSendReasonOptions" [value]="reason">{{ getReasonLabel(reason) }}</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="ui-actions">
+        <button class="ui-button ui-button--sm" type="button" (click)="clearListFilters()">
+          Clear
+        </button>
+        <span class="emails-page__selection">{{ getSelectedCount() }} selected</span>
+      </div>
+    </div>
+
+    @if (loading) {
+      <div class="ui-loading">
+        <div>
+          <div class="ui-spinner"></div>
+          Loading emails...
+        </div>
+      </div>
+    } @else if (emails.length === 0) {
+      <div class="ui-empty">No emails found for the current filters.</div>
+    } @else {
+      <div class="ui-table-wrap emails-page__table">
+        <table class="ui-table">
+          <thead>
+            <tr>
+              <th>
+                <input
+                  type="checkbox"
+                  [checked]="allVisibleSelected()"
+                  (change)="toggleAllVisible($any($event.target).checked)"
+                  aria-label="Select all visible emails"
+                />
+              </th>
+              <th>Email</th>
+              <th>Status</th>
+              <th>Send gate</th>
+              <th>Score</th>
+              <th>Checks</th>
+              <th>Customer</th>
+              <th>Domain</th>
+              <th>Created</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let email of emails; trackBy: trackEmail">
+              <td>
+                <input
+                  type="checkbox"
+                  [checked]="isSelected(email.id)"
+                  (change)="toggleEmailSelection(email.id, $any($event.target).checked)"
+                  [attr.aria-label]="'Select ' + email.email"
+                />
+              </td>
+              <td>
+                <div class="ui-table__primary ui-table__ellipsis">{{ email.email }}</div>
+                <div class="ui-table__muted">{{ email.firstName || '' }} {{ email.lastName || '' }}</div>
+              </td>
+              <td>
+                <span class="ui-badge" [ngClass]="getStatusBadgeClass(email.verificationStatus)">
+                  {{ email.verificationStatus }}
+                </span>
+              </td>
+              <td>
+                <span class="ui-badge" [ngClass]="getEligibilityBadgeClass(email.sendEligibility)">
+                  {{ getEligibilityLabel(email.sendEligibility) }}
+                </span>
+                @if (email.doNotSendReason) {
+                  <div class="ui-table__muted emails-page__reason">{{ getReasonLabel(email.doNotSendReason) }}</div>
+                }
+              </td>
+              <td class="emails-page__score">{{ email.qualityScore || 0 }}</td>
+              <td>
+                <div class="emails-page__checks" aria-label="Verification checks">
+                  <span class="ui-check" [ngClass]="email.hasValidSyntax ? 'ui-check--yes' : 'ui-check--no'">S</span>
+                  <span class="ui-check" [ngClass]="email.hasValidDns ? 'ui-check--yes' : 'ui-check--no'">D</span>
+                  <span class="ui-check" [ngClass]="email.hasValidSmtp ? 'ui-check--yes' : 'ui-check--muted'">M</span>
+                </div>
+              </td>
+              <td>
+                @if (email.customerId) {
+                  <span class="ui-badge ui-badge--info">#{{ email.customerId }}</span>
+                } @else {
+                  <span class="ui-table__muted">Unlinked</span>
+                }
+              </td>
+              <td class="ui-table__muted">{{ email.emailDomain || '-' }}</td>
+              <td class="ui-table__muted">{{ email.createdAt | date:'short' }}</td>
+              <td>
+                <div class="ui-table__actions">
+                  <button class="ui-button ui-button--sm ui-button--warning" type="button" (click)="markAsRisky(email.id)">
+                    Risky
+                  </button>
+                  <button class="ui-button ui-button--sm ui-button--danger" type="button" (click)="unsubscribe(email.id)">
+                    Unsub
+                  </button>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    }
+
+    <div class="ui-pagination" *ngIf="!loading && totalPages > 1">
+      <button class="ui-button ui-button--sm" type="button" [disabled]="currentPage === 1" (click)="onPageChange(currentPage - 1)">
+        Previous
+      </button>
+      <button
+        *ngFor="let page of getPages()"
+        class="ui-button ui-button--sm"
+        type="button"
+        [ngClass]="page === currentPage ? 'ui-button--primary' : ''"
+        (click)="onPageChange(page)"
+      >
+        {{ page }}
+      </button>
+      <button class="ui-button ui-button--sm" type="button" [disabled]="currentPage === totalPages" (click)="onPageChange(currentPage + 1)">
+        Next
+      </button>
+      <span class="ui-pagination__info">Page {{ currentPage }} of {{ totalPages }}</span>
+    </div>
+  }
+
+  @if (activeTab === 'analytics') {
+    <div class="ui-grid ui-grid--two">
+      <article class="ui-card">
+        <div class="ui-card__header">
+          <div>
+            <h2 class="ui-card__title">Status breakdown</h2>
+            <p class="ui-card__subtitle">Verification state distribution</p>
+          </div>
+        </div>
+        <div class="ui-card__body emails-page__bars">
+          <div class="emails-page__bar" *ngFor="let status of ['pending', 'valid', 'invalid', 'risky', 'disposable', 'unsubscribed']">
+            <span>{{ status }}</span>
+            <div class="ui-progress">
+              <div class="ui-progress__bar" [style.width.%]="getStatusPercentage(status)"></div>
+            </div>
+            <strong>{{ getStatusPercentage(status).toFixed(1) }}%</strong>
+          </div>
+        </div>
+      </article>
+
+      <article class="ui-card" *ngIf="!loadingQualityDistribution && qualityDistribution.length > 0">
+        <div class="ui-card__header">
+          <div>
+            <h2 class="ui-card__title">Quality distribution</h2>
+            <p class="ui-card__subtitle">Quality score ranges</p>
+          </div>
+        </div>
+        <div class="ui-card__body emails-page__bars">
+          <div class="emails-page__bar" *ngFor="let range of qualityDistribution">
+            <span>{{ range.range }}</span>
+            <div class="ui-progress">
+              <div class="ui-progress__bar" [style.width.%]="range.percentage"></div>
+            </div>
+            <strong>{{ range.percentage.toFixed(1) }}%</strong>
+          </div>
+        </div>
+      </article>
+    </div>
+
+    <article class="ui-card" *ngIf="!loadingEmailProviders && emailProviders.length > 0">
+      <div class="ui-card__header">
+        <div>
+          <h2 class="ui-card__title">Provider analytics</h2>
+          <p class="ui-card__subtitle">Largest email providers in the list</p>
+        </div>
+      </div>
+      <div class="ui-card__body emails-page__provider-grid">
+        <div class="emails-page__provider" *ngFor="let provider of emailProviders">
+          <strong>{{ provider.provider }}</strong>
+          <span>{{ provider.count | number }}</span>
+          <small>{{ provider.percentage.toFixed(1) }}%</small>
+        </div>
+      </div>
+    </article>
+  }
+
+  @if (activeTab === 'risk') {
+    <div class="ui-grid ui-grid--two">
+      <article class="ui-card" *ngIf="!loadingRiskAssessment && riskAssessment">
+        <div class="ui-card__header">
+          <div>
+            <h2 class="ui-card__title">Risk assessment</h2>
+            <p class="ui-card__subtitle">Records that need caution before sending</p>
+          </div>
+        </div>
+        <div class="ui-card__body emails-page__risk-grid">
+          <div>
+            <span>Disposable</span>
+            <strong>{{ riskAssessment.disposableEmails | number }}</strong>
+          </div>
+          <div>
+            <span>Role-based</span>
+            <strong>{{ riskAssessment.roleBasedEmails | number }}</strong>
+          </div>
+          <div>
+            <span>Low quality</span>
+            <strong>{{ riskAssessment.lowQualityEmails | number }}</strong>
+          </div>
+          <div>
+            <span>Total risky</span>
+            <strong>{{ riskAssessment.totalRiskyEmails | number }}</strong>
+          </div>
+        </div>
+      </article>
+
+      <article class="ui-card" *ngIf="!loadingDeliverability && deliverability">
+        <div class="ui-card__header">
+          <div>
+            <h2 class="ui-card__title">Deliverability score</h2>
+            <p class="ui-card__subtitle">Send-readiness categories</p>
+          </div>
+        </div>
+        <div class="ui-card__body emails-page__risk-grid">
+          <div>
+            <span>Safe to send</span>
+            <strong>{{ deliverability.safeToSend | number }}</strong>
+          </div>
+          <div>
+            <span>Risky</span>
+            <strong>{{ deliverability.risky | number }}</strong>
+          </div>
+          <div>
+            <span>Do not send</span>
+            <strong>{{ deliverability.doNotSend | number }}</strong>
+          </div>
+        </div>
+      </article>
+    </div>
+
+    <article class="ui-card" *ngIf="!loadingTopDomains && topDomains.length > 0">
+      <div class="ui-card__header">
+        <div>
+          <h2 class="ui-card__title">Customer linkage by domain</h2>
+          <p class="ui-card__subtitle">Where email domains connect to known customers</p>
+        </div>
+      </div>
+      <div class="ui-card__body">
+        <div class="ui-table-wrap emails-page__domains">
+          <table class="ui-table">
+            <thead>
+              <tr>
+                <th>Domain</th>
+                <th>Total</th>
+                <th>Linked</th>
+                <th>Rate</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr *ngFor="let domain of topDomains">
+                <td class="ui-table__primary">{{ domain.domain }}</td>
+                <td>{{ domain.total | number }}</td>
+                <td>{{ domain.withCustomers | number }}</td>
+                <td>{{ domain.linkageRate.toFixed(1) }}%</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </article>
+  }
+
+  @if (activeTab === 'typos') {
+    <div class="ui-grid ui-grid--metrics">
+      <article class="ui-card ui-metric ui-metric--warning">
+        <div class="ui-metric__label">Typo candidates</div>
+        <div class="ui-metric__value">{{ typoTotal | number }}</div>
+        <div class="ui-metric__meta">Saved for recovery</div>
+      </article>
+      <article class="ui-card ui-metric ui-metric--info">
+        <div class="ui-metric__label">Checked</div>
+        <div class="ui-metric__value">{{ getTypoFullScanTotal('scanned') | number }}</div>
+        <div class="ui-metric__meta">{{ getTypoFullScanPhaseLabel() }}</div>
+      </article>
+      <article class="ui-card ui-metric">
+        <div class="ui-metric__label">Found</div>
+        <div class="ui-metric__value">{{ getTypoFullScanTotal('found') | number }}</div>
+        <div class="ui-metric__meta">Typo matches</div>
+      </article>
+      <article class="ui-card ui-metric ui-metric--success">
+        <div class="ui-metric__label">Remaining</div>
+        <div class="ui-metric__value">{{ getTypoFullScanTotal('remaining') | number }}</div>
+        <div class="ui-metric__meta">Unscanned rows</div>
+      </article>
+    </div>
+
+    <div class="emails-page__quality-flow">
+      <div class="emails-page__flow-step">
+        <span>1</span>
+        <strong>Typo scanner</strong>
+      </div>
+      <div class="emails-page__flow-step">
+        <span>2</span>
+        <strong>Typo resolver</strong>
+      </div>
+    </div>
+
+    <article class="ui-card">
+      <div class="ui-card__header">
+        <div>
+          <h2 class="ui-card__title">1. Full typo scan</h2>
+          <p class="ui-card__subtitle">Scan emails and customers once, skip rows already checked, send typo matches to the resolver</p>
+        </div>
+        <span class="ui-badge" [ngClass]="isTypoFullScanRunning() ? 'ui-badge--pending' : 'ui-badge--valid'">
+          {{ getTypoFullScanState() }}
+        </span>
+      </div>
+      <div class="ui-card__body emails-page__typo-audit">
+        <div class="emails-page__scan-summary">
+          <div>
+            <span>Phase</span>
+            <strong>{{ getTypoFullScanPhaseLabel() }}</strong>
+          </div>
+          <div>
+            <span>Scanned</span>
+            <strong>{{ getTypoFullScanTotal('scanned') | number }}</strong>
+          </div>
+          <div>
+            <span>Saved</span>
+            <strong>{{ getTypoFullScanTotal('saved') | number }}</strong>
+          </div>
+          <div>
+            <span>Remaining</span>
+            <strong>{{ getTypoFullScanTotal('remaining') | number }}</strong>
+          </div>
+        </div>
+        <div class="emails-page__typo-actions">
+          <button
+            class="ui-button ui-button--primary"
+            type="button"
+            (click)="startFullTypoScan()"
+            [disabled]="typoAuditLoading || isTypoFullScanRunning()"
+            title="Scan all unscanned emails and customers in the background"
+          >
+            Start full scan
+          </button>
+          <button
+            class="ui-button"
+            type="button"
+            (click)="refreshTypoFullScanStatus()"
+            [disabled]="typoFullScanLoading"
+            title="Refresh typo scan status"
+          >
+            Refresh status
+          </button>
+          <button
+            class="ui-button"
+            type="button"
+            (click)="resetTypoScanProgress()"
+            [disabled]="typoAuditLoading || isTypoFullScanRunning()"
+            title="Clear scan progress for emails and customers"
+          >
+            Reset scan progress
+          </button>
+        </div>
+      </div>
+    </article>
+
+    <article class="ui-card">
+      <div class="ui-card__header">
+        <div>
+          <h2 class="ui-card__title">2. Typo resolver</h2>
+          <p class="ui-card__subtitle">Accept recoverable suggestions or ignore test addresses</p>
+        </div>
+      </div>
+      <div class="ui-card__body emails-page__resolver-toolbar">
+        <label class="ui-field">
+          <span class="ui-label">Search</span>
+          <input
+            type="text"
+            class="ui-input"
+            placeholder="Search original or suggestion"
+            [value]="typoSearchTerm"
+            (input)="onTypoSearchInput($any($event.target).value)"
+          />
+        </label>
+        <label class="ui-field">
+          <span class="ui-label">Status</span>
+          <select class="ui-select" [(ngModel)]="typoResolutionFilter" (change)="onTypoResolutionFilterChange()">
+            <option value="pending">Pending review</option>
+            <option value="accepted">Accepted for validation</option>
+            <option value="ignored">Ignored / test</option>
+          </select>
+        </label>
+        <label class="ui-field">
+          <span class="ui-label">Rows</span>
+          <select class="ui-select" [(ngModel)]="typoPageSize" (change)="onTypoPageSizeChange()">
+            <option [ngValue]="50">50</option>
+            <option [ngValue]="100">100</option>
+            <option [ngValue]="250">250</option>
+          </select>
+        </label>
+        <div class="emails-page__typo-actions">
+          <span class="emails-page__selection">
+            {{ typoTotal | number }} total / {{ getSelectedTypoCount() }} selected
+          </span>
+          <button
+            class="ui-button ui-button--primary"
+            type="button"
+            (click)="resolveSelectedTypos('accept')"
+            [disabled]="typoResolving || getSelectedTypoCount() === 0"
+          >
+            Accept selected
+          </button>
+          <button
+            class="ui-button ui-button--danger"
+            type="button"
+            (click)="resolveSelectedTypos('ignore')"
+            [disabled]="typoResolving || getSelectedTypoCount() === 0"
+          >
+            Ignore selected
+          </button>
+          <button class="ui-button" type="button" (click)="loadTypoEmails()" [disabled]="typoLoading">
+            Refresh
+          </button>
+        </div>
+      </div>
+      <div class="ui-card__body">
+        @if (typoLoading) {
+          <div class="ui-loading">
+            <div>
+              <div class="ui-spinner"></div>
+              Loading typo candidates...
+            </div>
+          </div>
+        } @else if (typoEmails.length === 0) {
+          <div class="ui-empty">No typo candidates match this status and search.</div>
+        } @else {
+          <div class="ui-table-wrap emails-page__table">
+            <table class="ui-table">
+              <thead>
+                <tr>
+                  <th>
+                    <input
+                      type="checkbox"
+                      [checked]="allVisibleTyposSelected()"
+                      (change)="toggleAllVisibleTypos($any($event.target).checked)"
+                      aria-label="Select all visible typo candidates"
+                    />
+                  </th>
+                  <th>Original</th>
+                  <th>Suggestion</th>
+                  <th>Resolver</th>
+                  <th>Source</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr *ngFor="let email of typoEmails; trackBy: trackEmail">
+                  <td>
+                    <input
+                      type="checkbox"
+                      [checked]="isTypoSelected(email.id)"
+                      (change)="toggleTypoSelection(email.id, $any($event.target).checked)"
+                      [attr.aria-label]="'Select typo candidate ' + email.email"
+                    />
+                  </td>
+                  <td>
+                    <div class="ui-table__primary ui-table__ellipsis">{{ email.email }}</div>
+                    <div class="ui-table__muted">{{ email.firstName || '' }} {{ email.lastName || '' }}</div>
+                  </td>
+                  <td>
+                    <div class="ui-table__primary">{{ email.typoSuggestion || '-' }}</div>
+                    <div class="ui-table__muted" *ngIf="email.typoResolvedEmail">Resolved: {{ email.typoResolvedEmail }}</div>
+                  </td>
+                  <td>
+                    <span class="ui-badge" [ngClass]="email.typoResolutionStatus === 'accepted' ? 'ui-badge--valid' : email.typoResolutionStatus === 'ignored' ? 'ui-badge--invalid' : 'ui-badge--risky'">
+                      {{ email.typoResolutionStatus || 'pending' }}
+                    </span>
+                  </td>
+                  <td class="ui-table__muted">{{ email.acquisitionSource || '-' }}</td>
+                  <td>
+                    <div class="ui-table__actions">
+                      <button
+                        class="ui-button ui-button--sm ui-button--primary"
+                        type="button"
+                        (click)="resolveTypo(email, 'accept')"
+                        [disabled]="typoResolving || email.typoResolutionStatus === 'accepted'"
+                      >
+                        Accept
+                      </button>
+                      <button
+                        class="ui-button ui-button--sm ui-button--danger"
+                        type="button"
+                        (click)="resolveTypo(email, 'ignore')"
+                        [disabled]="typoResolving || email.typoResolutionStatus === 'ignored'"
+                      >
+                        Ignore
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="ui-pagination" *ngIf="typoTotalPages > 1">
+            <button
+              class="ui-button ui-button--sm"
+              type="button"
+              [disabled]="typoCurrentPage === 1"
+              (click)="onTypoPageChange(typoCurrentPage - 1)"
+            >
+              Previous
+            </button>
+            <button
+              *ngFor="let page of getTypoPages()"
+              class="ui-button ui-button--sm"
+              type="button"
+              [ngClass]="page === typoCurrentPage ? 'ui-button--primary' : ''"
+              (click)="onTypoPageChange(page)"
+            >
+              {{ page }}
+            </button>
+            <button
+              class="ui-button ui-button--sm"
+              type="button"
+              [disabled]="typoCurrentPage === typoTotalPages"
+              (click)="onTypoPageChange(typoCurrentPage + 1)"
+            >
+              Next
+            </button>
+            <span class="ui-pagination__info">Page {{ typoCurrentPage }} of {{ typoTotalPages }}</span>
+          </div>
+        }
+      </div>
+    </article>
+
+    @if (typoAuditResult?.rows?.length) {
+      <article class="ui-card">
+        <div class="ui-card__header">
+          <div>
+            <h2 class="ui-card__title">Latest audit matches</h2>
+            <p class="ui-card__subtitle">Original and suggested addresses</p>
+          </div>
+        </div>
+        <div class="ui-card__body">
+          <div class="ui-table-wrap emails-page__table">
+            <table class="ui-table">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Original</th>
+                  <th>Suggestion</th>
+                  <th>Status</th>
+                  <th>Updated</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr *ngFor="let row of typoAuditResult?.rows">
+                  <td>#{{ row.id }}</td>
+                  <td class="ui-table__primary">{{ row.email }}</td>
+                  <td>{{ row.suggestedEmail }}</td>
+                  <td>
+                    <span class="ui-badge" [ngClass]="getStatusBadgeClass(row.status)">
+                      {{ row.status }}
+                    </span>
+                  </td>
+                  <td>{{ row.updated ? 'Yes' : 'No' }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </article>
+    }
+
+  }
+
+  @if (activeTab === 'validation') {
+    <div class="emails-page__quality-flow">
+      <div class="emails-page__flow-step">
+        <span>1</span>
+        <strong>Internal validation</strong>
+      </div>
+      <div class="emails-page__flow-step">
+        <span>2</span>
+        <strong>Campaign export</strong>
+      </div>
+      <div class="emails-page__flow-step">
+        <span>3</span>
+        <strong>NeverBounce batches</strong>
+      </div>
+      <div class="emails-page__flow-step">
+        <span>4</span>
+        <strong>Import results</strong>
+      </div>
+    </div>
+
+    <article class="ui-card">
+      <div class="ui-card__header">
+        <div>
+          <h2 class="ui-card__title">1. Validation overview</h2>
+          <p class="ui-card__subtitle">Internal checks first; NeverBounce import completes external status</p>
+        </div>
+      </div>
+      <div class="ui-card__body emails-page__validation-state">
+        <div>
+          <span>Sources</span>
+          <strong>Resolved typo fixes and domain batches</strong>
+        </div>
+        <div>
+          <span>Next implementation</span>
+          <strong>NeverBounce result import</strong>
+        </div>
+      </div>
+    </article>
+
+    <article class="ui-card">
+      <div class="ui-card__header">
+        <div>
+          <h2 class="ui-card__title">2. Campaign export gate</h2>
+          <p class="ui-card__subtitle">Default export includes only safe-to-send emails</p>
+        </div>
+      </div>
+      <div class="ui-card__body emails-page__campaign-export">
+        <label class="ui-field">
+          <span class="ui-label">Eligibility</span>
+          <select class="ui-select" [(ngModel)]="campaignEligibility" (change)="onCampaignExportChange()">
+            <option value="safe_to_send">Safe to send</option>
+            <option value="review">Review only</option>
+            <option value="pending">Pending only</option>
+          </select>
+        </label>
+        <label class="ui-field">
+          <span class="ui-label">Domain</span>
+          <select class="ui-select" [(ngModel)]="campaignDomain" (change)="onCampaignExportChange()">
+            <option value="">All domains</option>
+            <option *ngFor="let domain of emailDomains" [value]="domain">{{ domain }}</option>
+          </select>
+        </label>
+        <label class="ui-field">
+          <span class="ui-label">Batch</span>
+          <input class="ui-input" type="number" min="1" [(ngModel)]="campaignBatch" />
+        </label>
+        <label class="ui-field">
+          <span class="ui-label">Rows</span>
+          <input class="ui-input" type="number" min="1" max="5000" [(ngModel)]="campaignLimit" />
+        </label>
+        <div class="emails-page__typo-actions">
+          <button class="ui-button" type="button" (click)="loadCampaignPreview()" [disabled]="campaignLoading">
+            Preview campaign
+          </button>
+          <button class="ui-button ui-button--primary" type="button" (click)="downloadCampaignCsv()" [disabled]="campaignDownloading">
+            Download campaign CSV
+          </button>
+        </div>
+      </div>
+
+      @if (campaignPreview) {
+        <div class="ui-card__body emails-page__neverbounce-summary">
+          <div>
+            <span>Total rows</span>
+            <strong>{{ campaignPreview.total | number }}</strong>
+          </div>
+          <div>
+            <span>Batch</span>
+            <strong>{{ campaignPreview.batch }} / {{ campaignPreview.totalBatches || 1 }}</strong>
+          </div>
+          <div>
+            <span>Preview rows</span>
+            <strong>{{ campaignPreview.rows.length | number }}</strong>
+          </div>
+        </div>
+
+        <div class="ui-card__body">
+          <div class="ui-table-wrap emails-page__table">
+            <table class="ui-table">
+              <thead>
+                <tr>
+                  <th>Email</th>
+                  <th>Name</th>
+                  <th>Domain</th>
+                  <th>Send gate</th>
+                  <th>Status</th>
+                  <th>Score</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr *ngFor="let row of campaignPreview.rows.slice(0, 25)">
+                  <td class="ui-table__primary">{{ row.email }}</td>
+                  <td class="ui-table__muted">{{ row.firstName }} {{ row.lastName }}</td>
+                  <td>{{ row.emailDomain }}</td>
+                  <td>
+                    <span class="ui-badge" [ngClass]="getEligibilityBadgeClass(row.sendEligibility)">
+                      {{ getEligibilityLabel(row.sendEligibility) }}
+                    </span>
+                  </td>
+                  <td>
+                    <span class="ui-badge" [ngClass]="getStatusBadgeClass(row.verificationStatus)">
+                      {{ row.verificationStatus }}
+                    </span>
+                  </td>
+                  <td>{{ row.qualityScore }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      }
+    </article>
+
+    <article class="ui-card">
+      <div class="ui-card__header">
+        <div>
+          <h2 class="ui-card__title">3. NeverBounce batch builder</h2>
+          <p class="ui-card__subtitle">Export accepted typo fixes or 1000-email commercial domain batches</p>
+        </div>
+      </div>
+      <div class="ui-card__body emails-page__neverbounce">
+        <label class="ui-field">
+          <span class="ui-label">Segment</span>
+          <select class="ui-select" [(ngModel)]="neverBounceSegment" (change)="onNeverBounceSegmentChange()">
+            <option value="domain">Domain batch</option>
+            <option value="typo_resolved">Resolved typo fixes</option>
+          </select>
+        </label>
+        <label class="ui-field">
+          <span class="ui-label">Domain</span>
+          <select class="ui-select" [(ngModel)]="neverBounceDomain" [disabled]="neverBounceSegment !== 'domain'">
+            <option value="">Choose domain</option>
+            <option *ngFor="let domain of emailDomains" [value]="domain">{{ domain }}</option>
+          </select>
+        </label>
+        <label class="ui-field">
+          <span class="ui-label">Batch</span>
+          <input class="ui-input" type="number" min="1" [(ngModel)]="neverBounceBatch" />
+        </label>
+        <label class="ui-field">
+          <span class="ui-label">Rows</span>
+          <input class="ui-input" type="number" min="1" max="1000" [(ngModel)]="neverBounceLimit" />
+        </label>
+        <div class="emails-page__typo-actions">
+          <button class="ui-button" type="button" (click)="loadNeverBouncePreview()" [disabled]="neverBounceLoading">
+            Preview export
+          </button>
+          <button class="ui-button ui-button--primary" type="button" (click)="downloadNeverBounceCsv()" [disabled]="neverBounceDownloading">
+            Download CSV for NeverBounce
+          </button>
+        </div>
+      </div>
+
+      <div class="ui-card__body emails-page__domain-chips" *ngIf="getCommercialDomainOptions().length">
+        <button
+          class="ui-button ui-button--sm"
+          type="button"
+          *ngFor="let domain of getCommercialDomainOptions()"
+          (click)="chooseNeverBounceDomain(domain.domain)"
+        >
+          {{ domain.domain }} ({{ domain.count | number }})
+        </button>
+      </div>
+
+      @if (neverBouncePreview) {
+        <div class="ui-card__body emails-page__neverbounce-summary">
+          <div>
+            <span>Total rows</span>
+            <strong>{{ neverBouncePreview.total | number }}</strong>
+          </div>
+          <div>
+            <span>Batch</span>
+            <strong>{{ neverBouncePreview.batch }} / {{ neverBouncePreview.totalBatches || 1 }}</strong>
+          </div>
+          <div>
+            <span>Preview rows</span>
+            <strong>{{ neverBouncePreview.rows.length | number }}</strong>
+          </div>
+        </div>
+
+        <div class="ui-card__body">
+          <div class="ui-table-wrap emails-page__table">
+            <table class="ui-table">
+              <thead>
+                <tr>
+                  <th>Email to verify</th>
+                  <th>Original</th>
+                  <th>Domain</th>
+                  <th>Status</th>
+                  <th>Source</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr *ngFor="let row of neverBouncePreview.rows.slice(0, 25)">
+                  <td class="ui-table__primary">{{ row.email }}</td>
+                  <td class="ui-table__muted">{{ row.originalEmail }}</td>
+                  <td>{{ row.exportDomain }}</td>
+                  <td>
+                    <span class="ui-badge" [ngClass]="getStatusBadgeClass(row.verificationStatus)">
+                      {{ row.verificationStatus }}
+                    </span>
+                  </td>
+                  <td class="ui-table__muted">{{ row.acquisitionSource || '-' }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      }
+    </article>
+
+    <article class="ui-card">
+      <div class="ui-card__header">
+        <div>
+          <h2 class="ui-card__title">4. NeverBounce result import</h2>
+          <p class="ui-card__subtitle">Map scanned results back to email status</p>
+        </div>
+      </div>
+      <div class="ui-card__body emails-page__validation-state">
+        <div>
+          <span>Status mapping</span>
+          <strong>valid / invalid / catchall / unknown</strong>
+        </div>
+        <div>
+          <span>Send flow</span>
+          <strong>Only validated commercial batches</strong>
+        </div>
+      </div>
+    </article>
+  }
+</section>

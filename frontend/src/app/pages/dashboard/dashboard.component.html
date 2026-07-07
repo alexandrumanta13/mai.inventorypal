@@ -1,0 +1,288 @@
+<section class="ui-page dashboard-page">
+  <header class="ui-hero">
+    <div>
+      <span class="ui-kicker">Operations cockpit</span>
+      <h1 class="ui-title">Dashboard</h1>
+      <p class="ui-subtitle">
+        A single view for list quality, verification queues, import activity and Gmail readiness.
+      </p>
+      @if (lastUpdated) {
+        <p class="dashboard-page__updated">Last refreshed {{ lastUpdated | date:'shortTime' }}</p>
+      }
+    </div>
+
+    <div class="ui-hero-actions">
+      <button class="ui-button" type="button" (click)="loadCockpit()" [disabled]="loading">
+        Refresh
+      </button>
+      <button
+        class="ui-button ui-button--primary"
+        type="button"
+        (click)="startPendingVerification()"
+        [disabled]="actionLoading || getStatusCount('pending') === 0"
+      >
+        @if (actionLoading) {
+          <span class="ui-spinner ui-spinner--button" aria-hidden="true"></span>
+          Starting
+        } @else {
+          Verify pending
+        }
+      </button>
+    </div>
+  </header>
+
+  @if (errorMessage) {
+    <div class="ui-error" role="alert">{{ errorMessage }}</div>
+  }
+
+  @if (loading) {
+    <div class="ui-loading">
+      <div>
+        <div class="ui-spinner"></div>
+        Loading cockpit...
+      </div>
+    </div>
+  } @else {
+    <div class="ui-grid ui-grid--metrics">
+      <article class="ui-card ui-metric">
+        <div class="ui-metric__label">Total emails</div>
+        <div class="ui-metric__value">{{ stats.total | number }}</div>
+        <div class="ui-metric__meta">All imported records</div>
+      </article>
+
+      <article class="ui-card ui-metric ui-metric--success">
+        <div class="ui-metric__label">Valid</div>
+        <div class="ui-metric__value">{{ getStatusCount('valid') | number }}</div>
+        <div class="ui-metric__meta">{{ getStatusPercentage('valid') }}% of list</div>
+      </article>
+
+      <article class="ui-card ui-metric ui-metric--warning">
+        <div class="ui-metric__label">Pending review</div>
+        <div class="ui-metric__value">{{ getStatusCount('pending') | number }}</div>
+        <div class="ui-metric__meta">{{ getStatusPercentage('pending') }}% waiting</div>
+      </article>
+
+      <article class="ui-card ui-metric ui-metric--danger">
+        <div class="ui-metric__label">Do not send</div>
+        <div class="ui-metric__value">
+          {{ getStatusCount('invalid') + getStatusCount('disposable') + getStatusCount('unsubscribed') | number }}
+        </div>
+        <div class="ui-metric__meta">Invalid, disposable, unsubscribed</div>
+      </article>
+    </div>
+
+    <article class="ui-card dashboard-eligibility">
+      <div class="ui-card__header">
+        <div>
+          <h2 class="ui-card__title">Send eligibility</h2>
+          <p class="ui-card__subtitle">Campaign gate based on validation, suppression and typo state</p>
+        </div>
+        <span class="ui-badge" [ngClass]="getEligibilityCount('review') > 0 ? 'ui-badge--warning' : 'ui-badge--success'">
+          {{ getEligibilityCount('review') | number }} review
+        </span>
+      </div>
+
+      <div class="ui-card__body dashboard-eligibility__body">
+        <div class="dashboard-eligibility__meters">
+          <div class="dashboard-eligibility__meter dashboard-eligibility__meter--safe">
+            <span>Safe</span>
+            <strong>{{ getEligibilityCount('safe_to_send') | number }}</strong>
+            <small>{{ getEligibilityPercentage('safe_to_send') }}%</small>
+            <div class="ui-progress">
+              <div class="ui-progress__bar" [style.width.%]="getEligibilityPercentage('safe_to_send')"></div>
+            </div>
+          </div>
+
+          <div class="dashboard-eligibility__meter dashboard-eligibility__meter--pending">
+            <span>Pending</span>
+            <strong>{{ getEligibilityCount('pending') | number }}</strong>
+            <small>{{ getEligibilityPercentage('pending') }}%</small>
+            <div class="ui-progress">
+              <div class="ui-progress__bar" [style.width.%]="getEligibilityPercentage('pending')"></div>
+            </div>
+          </div>
+
+          <div class="dashboard-eligibility__meter dashboard-eligibility__meter--review">
+            <span>Review</span>
+            <strong>{{ getEligibilityCount('review') | number }}</strong>
+            <small>{{ getEligibilityPercentage('review') }}%</small>
+            <div class="ui-progress">
+              <div class="ui-progress__bar" [style.width.%]="getEligibilityPercentage('review')"></div>
+            </div>
+          </div>
+
+          <div class="dashboard-eligibility__meter dashboard-eligibility__meter--blocked">
+            <span>Blocked</span>
+            <strong>{{ getEligibilityCount('do_not_send') | number }}</strong>
+            <small>{{ getEligibilityPercentage('do_not_send') }}%</small>
+            <div class="ui-progress">
+              <div class="ui-progress__bar" [style.width.%]="getEligibilityPercentage('do_not_send')"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="dashboard-eligibility__reasons">
+          @if (sendEligibility.byReason.length > 0) {
+            <div
+              class="dashboard-eligibility__reason"
+              *ngFor="let reason of sendEligibility.byReason.slice(0, 6)"
+            >
+              <span>{{ getReasonLabel(reason.reason) }}</span>
+              <strong>{{ reason.count | number }}</strong>
+              <small>{{ getEligibilityLabel(reason.eligibility) }}</small>
+            </div>
+          } @else {
+            <div class="ui-empty">No eligibility reasons yet.</div>
+          }
+        </div>
+      </div>
+    </article>
+
+    <div class="dashboard-page__panel-grid">
+      <article class="ui-card dashboard-panel dashboard-panel--strong">
+        <div class="ui-card__header">
+          <div>
+            <h2 class="ui-card__title">Verification queue</h2>
+            <p class="ui-card__subtitle">Current BullMQ workload</p>
+          </div>
+          <span class="ui-badge" [ngClass]="queue.failed > 0 ? 'ui-badge--danger' : 'ui-badge--success'">
+            {{ queue.failed > 0 ? 'Needs review' : 'Healthy' }}
+          </span>
+        </div>
+        <div class="ui-card__body">
+          <div class="dashboard-queue">
+            <div>
+              <span>Waiting</span>
+              <strong>{{ queue.waiting | number }}</strong>
+            </div>
+            <div>
+              <span>Active</span>
+              <strong>{{ queue.active | number }}</strong>
+            </div>
+            <div>
+              <span>Failed</span>
+              <strong>{{ queue.failed | number }}</strong>
+            </div>
+          </div>
+
+          <div class="ui-progress" aria-label="Queue load">
+            <div class="ui-progress__bar" [style.width.%]="getQueueLoad()"></div>
+          </div>
+        </div>
+      </article>
+
+      <article class="ui-card dashboard-panel">
+        <div class="ui-card__header">
+          <div>
+            <h2 class="ui-card__title">Gmail connection</h2>
+            <p class="ui-card__subtitle">OAuth and refresh token status</p>
+          </div>
+          <span class="ui-badge" [ngClass]="isGmailReady() ? 'ui-badge--success' : 'ui-badge--warning'">
+            {{ isGmailReady() ? 'Ready' : 'Needs setup' }}
+          </span>
+        </div>
+        <div class="ui-card__body">
+          <p class="dashboard-page__muted">{{ gmailStatus.message || 'Gmail status unavailable.' }}</p>
+          <div class="dashboard-mini-stats">
+            <span [class.dashboard-mini-stats__on]="gmailStatus.configured">Credentials</span>
+            <span [class.dashboard-mini-stats__on]="gmailStatus.hasRefreshToken">Refresh token</span>
+          </div>
+
+          @if (gmailScanStats) {
+            <div class="dashboard-gmail-scan">
+              <div>
+                <span>Scanned</span>
+                <strong>{{ gmailScanStats.scanned | number }}</strong>
+                <small>{{ getGmailScanCoverage() }}% of email table</small>
+              </div>
+              <div>
+                <span>Last 24h</span>
+                <strong>{{ gmailScanStats.recentScans.last24h | number }}</strong>
+                <small>Processed by Gmail scan</small>
+              </div>
+            </div>
+
+            <div class="dashboard-gmail-categories">
+              <span>Orders {{ gmailScanStats.byCategory.order | number }}</span>
+              <span>Unsub {{ gmailScanStats.byCategory.unsubscribe | number }}</span>
+              <span>Abuse {{ gmailScanStats.byCategory.abuse | number }}</span>
+              <span>Bounce {{ gmailScanStats.byCategory.bounce | number }}</span>
+            </div>
+          }
+        </div>
+      </article>
+
+      <article class="ui-card dashboard-panel">
+        <div class="ui-card__header">
+          <div>
+            <h2 class="ui-card__title">Deliverability</h2>
+            <p class="ui-card__subtitle">Send-readiness split</p>
+          </div>
+        </div>
+        <div class="ui-card__body dashboard-deliverability">
+          <div>
+            <strong>{{ deliverability.safeToSend | number }}</strong>
+            <span>Safe</span>
+            <small>{{ getDeliverabilityPercentage('safeToSend') }}%</small>
+          </div>
+          <div>
+            <strong>{{ deliverability.risky | number }}</strong>
+            <span>Risky</span>
+            <small>{{ getDeliverabilityPercentage('risky') }}%</small>
+          </div>
+          <div>
+            <strong>{{ deliverability.doNotSend | number }}</strong>
+            <span>Blocked</span>
+            <small>{{ getDeliverabilityPercentage('doNotSend') }}%</small>
+          </div>
+        </div>
+      </article>
+    </div>
+
+    <article class="ui-card">
+      <div class="ui-card__header">
+        <div>
+          <h2 class="ui-card__title">Recent imports</h2>
+          <p class="ui-card__subtitle">Latest ingestion jobs surfaced from the backend</p>
+        </div>
+        <a class="ui-button ui-button--sm" routerLink="/import">Open imports</a>
+      </div>
+      <div class="ui-card__body">
+        @if (importJobs.length > 0) {
+          <div class="ui-table-wrap dashboard-imports">
+            <table class="ui-table">
+              <thead>
+                <tr>
+                  <th>Job</th>
+                  <th>Source</th>
+                  <th>Status</th>
+                  <th>Imported</th>
+                  <th>Duplicates</th>
+                  <th>Created</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr *ngFor="let job of importJobs; trackBy: trackImportJob">
+                  <td class="ui-table__primary">#{{ job.id }}</td>
+                  <td>{{ job.sourceType }}</td>
+                  <td>
+                    <span class="ui-badge" [ngClass]="getImportJobBadgeClass(job.status)">
+                      {{ job.status }}
+                    </span>
+                  </td>
+                  <td>{{ job.importedEmails | number }}</td>
+                  <td>{{ job.duplicateEmails | number }}</td>
+                  <td class="ui-table__muted">{{ job.createdAt | date:'short' }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        } @else {
+          <div class="ui-empty">No import jobs yet.</div>
+        }
+      </div>
+    </article>
+  }
+</section>
+
+<app-gmail-scan-progress></app-gmail-scan-progress>

@@ -1,0 +1,90 @@
+<main class="ui-login">
+  <section class="ui-login__story" aria-label="InventoryPal Email">
+    <div class="ui-login__brand">
+      <span class="ui-login__mark">IP</span>
+      <span>InventoryPal Email Ops</span>
+    </div>
+
+    <div>
+      <h1 class="ui-login__headline">Clean lists. Clear signals. Confident sends.</h1>
+      <p class="ui-login__note">
+        Operational console for imported contacts, verification queues, Gmail scans and deliverability review.
+      </p>
+    </div>
+
+    <div class="ui-kicker">Protected workspace</div>
+  </section>
+
+  <section class="ui-login__panel">
+    <div class="ui-login-card">
+      <div>
+        <h2 class="ui-login-card__title">Sign in</h2>
+        <p class="ui-login-card__subtitle">Use your administrator account to continue.</p>
+      </div>
+
+      <form class="ui-form" [formGroup]="loginForm" (ngSubmit)="onSubmit()">
+        @if (error) {
+          <div class="ui-form__error" role="alert">
+            {{ error }}
+          </div>
+        }
+
+        <div class="ui-field">
+          <label for="email" class="ui-label">Email address</label>
+          <input
+            id="email"
+            type="email"
+            formControlName="email"
+            class="ui-input"
+            [class.ui-input--invalid]="f['email'].invalid && f['email'].touched"
+            placeholder="Email address"
+            autocomplete="username"
+          />
+          @if (f['email'].invalid && f['email'].touched) {
+            <p class="ui-field-error">
+              @if (f['email'].errors?.['required']) {
+                Email is required
+              }
+              @if (f['email'].errors?.['email']) {
+                Please enter a valid email
+              }
+            </p>
+          }
+        </div>
+
+        <div class="ui-field">
+          <label for="password" class="ui-label">Password</label>
+          <input
+            id="password"
+            type="password"
+            formControlName="password"
+            class="ui-input"
+            [class.ui-input--invalid]="f['password'].invalid && f['password'].touched"
+            placeholder="Password"
+            autocomplete="current-password"
+          />
+          @if (f['password'].invalid && f['password'].touched) {
+            <p class="ui-field-error">
+              @if (f['password'].errors?.['required']) {
+                Password is required
+              }
+            </p>
+          }
+        </div>
+
+        <button
+          type="submit"
+          [disabled]="loading || loginForm.invalid"
+          class="ui-button ui-button--primary"
+        >
+          @if (loading) {
+            <span class="ui-spinner ui-spinner--button" aria-hidden="true"></span>
+            Signing in
+          } @else {
+            Sign in
+          }
+        </button>
+      </form>
+    </div>
+  </section>
+</main>

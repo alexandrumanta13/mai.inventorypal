@@ -1,0 +1,7 @@
+{
+  "/api": {
+    "target": "http://mailpal.inventorypal.ro",
+    "secure": false,
+    "changeOrigin": true
+  }
+}

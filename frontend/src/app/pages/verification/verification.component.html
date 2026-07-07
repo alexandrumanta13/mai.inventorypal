@@ -1,0 +1,447 @@
+<section class="ui-page ui-page--wide verification-page">
+  <header class="ui-hero">
+    <div>
+      <span class="ui-kicker">Quality gate</span>
+      <h1 class="ui-title">Validation</h1>
+      <p class="ui-subtitle">
+        Central intake state for SuppliKit auto-add, internal verification, typo recovery and NeverBounce cleanup.
+      </p>
+      <p class="verification-page__updated" *ngIf="lastUpdated">Last refreshed {{ lastUpdated | date:'shortTime' }}</p>
+    </div>
+
+    <div class="ui-hero-actions">
+      <button class="ui-button" type="button" (click)="loadValidation()" [disabled]="loading">Refresh</button>
+      <button
+        class="ui-button ui-button--primary"
+        type="button"
+        (click)="startPendingValidation()"
+        [disabled]="actionLoading !== '' || overview.totals.pendingValidation === 0"
+      >
+        <span class="ui-spinner ui-spinner--button" *ngIf="actionLoading === 'validation'" aria-hidden="true"></span>
+        Validate pending
+      </button>
+    </div>
+  </header>
+
+  <div class="ui-error" role="alert" *ngIf="errorMessage">{{ errorMessage }}</div>
+  <div class="verification-page__notice" *ngIf="actionMessage">{{ actionMessage }}</div>
+
+  <div class="ui-loading" *ngIf="loading">
+    <div>
+      <div class="ui-spinner"></div>
+      Loading validation...
+    </div>
+  </div>
+
+  <ng-container *ngIf="!loading">
+    <div class="ui-grid ui-grid--metrics">
+      <article class="ui-card ui-metric">
+        <div class="ui-metric__label">Total emails</div>
+        <div class="ui-metric__value">{{ overview.totals.emails | number }}</div>
+        <div class="ui-metric__meta">All known rows</div>
+      </article>
+
+      <article class="ui-card ui-metric ui-metric--warning">
+        <div class="ui-metric__label">Pending validation</div>
+        <div class="ui-metric__value">{{ overview.totals.pendingValidation | number }}</div>
+        <div class="ui-metric__meta">Accepted, not verified</div>
+      </article>
+
+      <article class="ui-card ui-metric ui-metric--success">
+        <div class="ui-metric__label">Safe to send</div>
+        <div class="ui-metric__value">{{ overview.totals.safeToSend | number }}</div>
+        <div class="ui-metric__meta">Valid, no typo flag</div>
+      </article>
+
+      <article class="ui-card ui-metric ui-metric--danger">
+        <div class="ui-metric__label">Do not send</div>
+        <div class="ui-metric__value">{{ overview.totals.doNotSend | number }}</div>
+        <div class="ui-metric__meta">Invalid, disposable, unsubscribed</div>
+      </article>
+    </div>
+
+    <div class="verification-page__control-grid">
+      <article class="ui-card verification-panel verification-panel--primary">
+        <div class="ui-card__header">
+          <div>
+            <h2 class="ui-card__title">Intake gate</h2>
+            <p class="ui-card__subtitle">SuppliKit accepted emails are queued before send eligibility</p>
+          </div>
+          <span class="ui-badge ui-badge--success">Connected</span>
+        </div>
+        <div class="ui-card__body">
+          <div class="verification-flow">
+            <div>
+              <span>Blocked</span>
+              <strong>{{ overview.totals.doNotSend | number }}</strong>
+            </div>
+            <div>
+              <span>Typo review</span>
+              <strong>{{ overview.totals.typoReview | number }}</strong>
+            </div>
+            <div>
+              <span>Risk/review</span>
+              <strong>{{ overview.totals.riskyOrReview | number }}</strong>
+            </div>
+            <div>
+              <span>Bounces</span>
+              <strong>{{ overview.totals.bounceInvalid | number }}</strong>
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <article class="ui-card verification-panel">
+        <div class="ui-card__header">
+          <div>
+            <h2 class="ui-card__title">Verification queue</h2>
+            <p class="ui-card__subtitle">Internal syntax, DNS, SMTP and filter checks</p>
+          </div>
+          <span class="ui-badge" [ngClass]="queue.failed > 0 ? 'ui-badge--danger' : 'ui-badge--success'">
+            {{ queue.failed > 0 ? 'Failed jobs' : 'Healthy' }}
+          </span>
+        </div>
+        <div class="ui-card__body">
+          <div class="verification-queue">
+            <div>
+              <span>Waiting</span>
+              <strong>{{ queue.waiting | number }}</strong>
+            </div>
+            <div>
+              <span>Active</span>
+              <strong>{{ queue.active | number }}</strong>
+            </div>
+            <div>
+              <span>Failed</span>
+              <strong>{{ queue.failed | number }}</strong>
+            </div>
+          </div>
+          <div class="ui-progress" aria-label="Verification queue pressure">
+            <div class="ui-progress__bar" [style.width.%]="getQueuePressure()"></div>
+          </div>
+          <div class="verification-actions">
+            <label class="ui-field">
+              <span class="ui-label">Rows</span>
+              <input class="ui-input" type="number" min="1" max="50000" [(ngModel)]="validationLimit" />
+            </label>
+            <label class="verification-checkbox">
+              <input type="checkbox" [(ngModel)]="skipSmtp" />
+              <span>Skip SMTP</span>
+            </label>
+            <button class="ui-button" type="button" (click)="refreshQueue()" [disabled]="actionLoading !== ''">
+              Refresh queue
+            </button>
+          </div>
+        </div>
+      </article>
+
+      <article class="ui-card verification-panel">
+        <div class="ui-card__header">
+          <div>
+            <h2 class="ui-card__title">Typo scan</h2>
+            <p class="ui-card__subtitle">Full-list scanner status</p>
+          </div>
+          <span class="ui-badge" [ngClass]="typoScanJob?.state === 'active' ? 'ui-badge--pending' : 'ui-badge--info'">
+            {{ getTypoScanLabel() }}
+          </span>
+        </div>
+        <div class="ui-card__body">
+          <div class="verification-typo-stats">
+            <div>
+              <span>Emails scanned</span>
+              <strong>{{ getTypoScanCount('emails', 'scanned') | number }}</strong>
+              <small>{{ getTypoScanCount('emails', 'matches') | number }} matches</small>
+            </div>
+            <div>
+              <span>Customers scanned</span>
+              <strong>{{ getTypoScanCount('customers', 'scanned') | number }}</strong>
+              <small>{{ getTypoScanCount('customers', 'matches') | number }} matches</small>
+            </div>
+          </div>
+        </div>
+      </article>
+    </div>
+
+    <article class="ui-card verification-suppression">
+      <div class="ui-card__header">
+        <div>
+          <h2 class="ui-card__title">Suppression & delivery signals</h2>
+          <p class="ui-card__subtitle">Do-not-send state from Gmail, Elastic Email and manual quality decisions</p>
+        </div>
+        <span class="ui-badge" [ngClass]="suppressionOverview.totals.elasticDoNotSendRows > 0 ? 'ui-badge--pending' : 'ui-badge--info'">
+          Elastic {{ suppressionOverview.totals.elasticDoNotSendRows | number }}
+        </span>
+      </div>
+
+      <div class="ui-card__body">
+        <div class="verification-suppression__metrics">
+          <div>
+            <span>Do not send</span>
+            <strong>{{ suppressionOverview.totals.doNotSend | number }}</strong>
+            <small>{{ getElasticDoNotSendShare() }}% Elastic source</small>
+          </div>
+          <div>
+            <span>Elastic suppression</span>
+            <strong>{{ suppressionOverview.totals.elasticSuppressionRows | number }}</strong>
+            <small>Created from unknown negative events</small>
+          </div>
+          <div>
+            <span>Bounce after unsubscribe</span>
+            <strong>{{ suppressionOverview.totals.bounceAfterUnsubscribe | number }}</strong>
+            <small>Winback blocked by deliverability</small>
+          </div>
+          <div>
+            <span>Gmail signals</span>
+            <strong>{{ getGmailSignalTotal() | number }}</strong>
+            <small>Bounce, unsubscribe and abuse</small>
+          </div>
+          <div>
+            <span>Elastic events</span>
+            <strong>{{ suppressionOverview.totals.elasticEvents | number }}</strong>
+            <small>Provider evidence stored</small>
+          </div>
+        </div>
+
+        <div class="verification-suppression__columns">
+          <section>
+            <h3>Do-not-send reasons</h3>
+            <div class="verification-breakdown" *ngIf="doNotSendReasonRows.length > 0">
+              <div *ngFor="let row of doNotSendReasonRows">
+                <span>{{ formatMapLabel(row.key) }}</span>
+                <strong>{{ row.count | number }}</strong>
+              </div>
+            </div>
+            <div class="ui-empty" *ngIf="doNotSendReasonRows.length === 0">No suppression reasons yet.</div>
+          </section>
+
+          <section>
+            <h3>Validation sources</h3>
+            <div class="verification-breakdown" *ngIf="doNotSendSourceRows.length > 0">
+              <div *ngFor="let row of doNotSendSourceRows">
+                <span>{{ formatMapLabel(row.key) }}</span>
+                <strong>{{ row.count | number }}</strong>
+              </div>
+            </div>
+            <div class="ui-empty" *ngIf="doNotSendSourceRows.length === 0">No source data yet.</div>
+          </section>
+
+          <section>
+            <h3>Elastic statuses</h3>
+            <div class="verification-breakdown" *ngIf="elasticEventStatusRows.length > 0">
+              <div *ngFor="let row of elasticEventStatusRows">
+                <span>{{ formatMapLabel(row.key) }}</span>
+                <strong>{{ row.count | number }}</strong>
+              </div>
+            </div>
+            <div class="ui-empty" *ngIf="elasticEventStatusRows.length === 0">No Elastic events loaded.</div>
+          </section>
+
+          <section>
+            <h3>Gmail categories</h3>
+            <div class="verification-breakdown" *ngIf="gmailSignalRows.length > 0">
+              <div *ngFor="let row of gmailSignalRows">
+                <span>{{ formatMapLabel(row.key) }}</span>
+                <strong>{{ row.count | number }}</strong>
+              </div>
+            </div>
+            <div class="ui-empty" *ngIf="gmailSignalRows.length === 0">No Gmail suppression signals.</div>
+          </section>
+        </div>
+      </div>
+    </article>
+
+    <article class="ui-card verification-bounce">
+      <div class="ui-card__header">
+        <div>
+          <h2 class="ui-card__title">Bounce recovery</h2>
+          <p class="ui-card__subtitle">Mail-daemon failures, Elastic bounces and recoverable customer typos</p>
+        </div>
+        <span class="ui-badge" [ngClass]="getBounceStatusCount('pending') > 0 ? 'ui-badge--pending' : 'ui-badge--success'">
+          {{ getBounceStatusCount('pending') | number }} pending
+        </span>
+      </div>
+
+      <div class="ui-card__body">
+        <div class="verification-bounce__metrics">
+          <div>
+            <span>Pending</span>
+            <strong>{{ getBounceStatusCount('pending') | number }}</strong>
+          </div>
+          <div>
+            <span>Approved</span>
+            <strong>{{ getBounceStatusCount('approved') | number }}</strong>
+          </div>
+          <div>
+            <span>Ignored</span>
+            <strong>{{ getBounceStatusCount('ignored') | number }}</strong>
+          </div>
+          <div>
+            <span>Name typo</span>
+            <strong>{{ getBounceReasonCount('name_localpart_typo') | number }}</strong>
+          </div>
+          <div>
+            <span>Domain typo</span>
+            <strong>{{ getBounceReasonCount('domain_typo') | number }}</strong>
+          </div>
+        </div>
+
+        <div class="verification-bounce__toolbar">
+          <div class="verification-segmented" role="group" aria-label="Bounce status">
+            <button type="button" [class.is-active]="bounceStatus === 'pending'" (click)="setBounceStatus('pending')">
+              Pending {{ getBounceStatusCount('pending') | number }}
+            </button>
+            <button type="button" [class.is-active]="bounceStatus === 'approved'" (click)="setBounceStatus('approved')">
+              Approved {{ getBounceStatusCount('approved') | number }}
+            </button>
+            <button type="button" [class.is-active]="bounceStatus === 'ignored'" (click)="setBounceStatus('ignored')">
+              Unsafe {{ getBounceStatusCount('ignored') | number }}
+            </button>
+          </div>
+
+          <label class="ui-field verification-bounce__search">
+            <span class="ui-label">Search</span>
+            <input
+              class="ui-input"
+              type="search"
+              placeholder="email, suggestion, customer"
+              [(ngModel)]="bounceSearch"
+              (keyup.enter)="searchBounceRecovery()"
+            />
+          </label>
+
+          <button class="ui-button" type="button" (click)="searchBounceRecovery()" [disabled]="actionLoading !== ''">
+            Search
+          </button>
+          <button class="ui-button" type="button" (click)="refreshBounceRecovery()" [disabled]="actionLoading !== ''">
+            Refresh
+          </button>
+        </div>
+
+        <div class="verification-bounce__table" *ngIf="bounceCandidates.length > 0">
+          <div class="verification-bounce__row verification-bounce__row--head">
+            <span>Bounced</span>
+            <span>Suggestion</span>
+            <span>Evidence</span>
+            <span>Customer</span>
+            <span>Actions</span>
+          </div>
+
+          <div class="verification-bounce__row" *ngFor="let candidate of bounceCandidates; trackBy: trackBounceCandidate">
+            <div>
+              <strong>{{ candidate.bouncedEmail }}</strong>
+              <small>{{ candidate.currentEmailStatus || 'bounce' }} · {{ candidate.bouncedAt || candidate.createdAt | date:'mediumDate' }}</small>
+            </div>
+            <div>
+              <strong>{{ candidate.suggestedEmail }}</strong>
+              <small>{{ getBounceResolutionLabel(candidate) }}</small>
+            </div>
+            <div>
+              <div class="verification-bounce__evidence">
+                <span class="ui-badge" [ngClass]="candidate.confidence === 'high' ? 'ui-badge--success' : 'ui-badge--info'">
+                  {{ candidate.confidence }}
+                </span>
+                <span class="ui-badge ui-badge--muted">{{ getBounceReasonLabel(candidate.reason) }}</span>
+              </div>
+              <small>{{ getBounceSourceLabel(candidate.source) }}</small>
+            </div>
+            <div>
+              <strong>{{ candidate.customerName || '-' }}</strong>
+              <small>
+                <ng-container *ngIf="candidate.customerId">Customer #{{ candidate.customerId }}</ng-container>
+                <ng-container *ngIf="!candidate.customerId && candidate.emailId">Email #{{ candidate.emailId }}</ng-container>
+                <ng-container *ngIf="!candidate.customerId && !candidate.emailId">No linked record</ng-container>
+              </small>
+            </div>
+            <div class="verification-bounce__actions">
+              <button
+                class="ui-button ui-button--sm"
+                type="button"
+                (click)="copyBounceEmail(candidate)"
+                [disabled]="actionLoading !== ''"
+              >
+                Copy
+              </button>
+              <button
+                class="ui-button ui-button--sm ui-button--primary"
+                type="button"
+                *ngIf="candidate.status === 'pending'"
+                (click)="approveBounceCandidate(candidate)"
+                [disabled]="actionLoading !== ''"
+              >
+                <span class="ui-spinner ui-spinner--button" *ngIf="actionLoading === 'bounce-approve-' + candidate.id" aria-hidden="true"></span>
+                Approve + validate
+              </button>
+              <button
+                class="ui-button ui-button--sm ui-button--danger"
+                type="button"
+                *ngIf="candidate.status === 'pending'"
+                (click)="ignoreBounceCandidate(candidate)"
+                [disabled]="actionLoading !== ''"
+              >
+                Mark unsafe
+              </button>
+              <span class="ui-badge ui-badge--muted" *ngIf="candidate.status !== 'pending'">
+                {{ formatMapLabel(candidate.status) }}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div class="ui-empty" *ngIf="bounceCandidates.length === 0">
+          No bounce recovery candidates for this filter.
+        </div>
+
+        <div class="verification-bounce__pager">
+          <button class="ui-button ui-button--sm" type="button" (click)="moveBouncePage(-1)" [disabled]="bounceOffset === 0 || actionLoading !== ''">
+            Previous
+          </button>
+          <span>{{ getBouncePageLabel() }}</span>
+          <button class="ui-button ui-button--sm" type="button" (click)="moveBouncePage(1)" [disabled]="bounceOffset + bounceLimit >= bounceTotal || actionLoading !== ''">
+            Next
+          </button>
+        </div>
+      </div>
+    </article>
+
+    <div class="ui-grid ui-grid--two">
+      <article class="ui-card">
+        <div class="ui-card__header">
+          <div>
+            <h2 class="ui-card__title">Status map</h2>
+            <p class="ui-card__subtitle">Current verification distribution</p>
+          </div>
+        </div>
+        <div class="ui-card__body verification-status-grid">
+          <div *ngFor="let status of ['pending', 'valid', 'risky', 'invalid', 'disposable', 'unsubscribed', 'unknown']">
+            <span>{{ status }}</span>
+            <strong>{{ getStatusCount(status) | number }}</strong>
+          </div>
+        </div>
+      </article>
+
+      <article class="ui-card">
+        <div class="ui-card__header">
+          <div>
+            <h2 class="ui-card__title">Public mailbox batches</h2>
+            <p class="ui-card__subtitle">Romania-focused mailbox providers for NeverBounce cleanup</p>
+          </div>
+        </div>
+        <div class="ui-card__body verification-domains">
+          <div class="verification-domain" *ngFor="let domain of overview.topCommercialDomains">
+            <div>
+              <strong>{{ domain.domain }}</strong>
+              <span>{{ domain.count | number }} total · {{ domain.pendingValidation | number }} pending · {{ domain.validated | number }} valid</span>
+            </div>
+            <button class="ui-button ui-button--sm" type="button" (click)="downloadDomainBatch(domain.domain)">
+              CSV
+            </button>
+          </div>
+
+          <div class="ui-empty" *ngIf="overview.topCommercialDomains.length === 0">
+            No public mailbox domains loaded.
+          </div>
+        </div>
+      </article>
+    </div>
+  </ng-container>
+</section>
