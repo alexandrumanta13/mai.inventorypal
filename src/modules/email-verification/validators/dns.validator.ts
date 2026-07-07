@@ -30,12 +30,15 @@ export interface DnsValidationResult {
 export class DnsValidator implements OnModuleInit {
   private readonly logger = new Logger(DnsValidator.name);
   private readonly CACHE_TTL = 24 * 60 * 60; // 24 hours in seconds
-  private readonly CACHE_PREFIX = 'dns:mx:';
+  private cachePrefix = 'dns:mx:';
   private redis: Redis;
 
   constructor(private readonly configService: ConfigService) {}
 
   onModuleInit() {
+    const redisUsername = this.configService.get<string>('redis.username');
+    this.cachePrefix = redisUsername ? `${redisUsername}:dns:mx:` : 'dns:mx:';
+
     // Initialize Redis client
     this.redis = new Redis({
       host: this.configService.get('redis.host'),
@@ -43,6 +46,7 @@ export class DnsValidator implements OnModuleInit {
       username: this.configService.get('redis.username') || undefined,
       password: this.configService.get('redis.password'),
       db: this.configService.get('redis.db'),
+      keyPrefix: '',
     });
   }
 
@@ -169,7 +173,7 @@ export class DnsValidator implements OnModuleInit {
    */
   private async getCachedResult(domain: string): Promise<DnsValidationResult | null> {
     try {
-      const cacheKey = `${this.CACHE_PREFIX}${domain}`;
+      const cacheKey = `${this.cachePrefix}${domain}`;
       const cached = await this.redis.get(cacheKey);
 
       if (!cached) {
@@ -192,7 +196,7 @@ export class DnsValidator implements OnModuleInit {
     ttl: number,
   ): Promise<void> {
     try {
-      const cacheKey = `${this.CACHE_PREFIX}${domain}`;
+      const cacheKey = `${this.cachePrefix}${domain}`;
       await this.redis.setex(cacheKey, ttl, JSON.stringify(result));
     } catch (error) {
       this.logger.error(`Cache write error for ${domain}: ${error.message}`);
@@ -214,7 +218,7 @@ export class DnsValidator implements OnModuleInit {
    * Clear cache for specific domain
    */
   async clearCache(domain: string): Promise<void> {
-    const cacheKey = `${this.CACHE_PREFIX}${domain}`;
+    const cacheKey = `${this.cachePrefix}${domain}`;
     await this.redis.del(cacheKey);
   }
 
@@ -225,10 +229,10 @@ export class DnsValidator implements OnModuleInit {
     totalKeys: number;
     domains: string[];
   }> {
-    const pattern = `${this.CACHE_PREFIX}*`;
+    const pattern = `${this.cachePrefix}*`;
     const keys = await this.redis.keys(pattern);
 
-    const domains = keys.map((key) => key.replace(this.CACHE_PREFIX, ''));
+    const domains = keys.map((key) => key.replace(this.cachePrefix, ''));
 
     return {
       totalKeys: keys.length,
