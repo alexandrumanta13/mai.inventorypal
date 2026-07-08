@@ -441,6 +441,162 @@
       </div>
     </article>
 
+    <article class="ui-card verification-recovery-export">
+      <div class="ui-card__header">
+        <div>
+          <h2 class="ui-card__title">Recovery external validation export</h2>
+          <p class="ui-card__subtitle">CSV-first flow for recovered typo emails before ZeroBounce/NeverBounce import</p>
+        </div>
+        <span class="ui-badge ui-badge--pending">External check</span>
+      </div>
+
+      <div class="ui-card__body">
+        <div class="verification-recovery-export__controls">
+          <label class="ui-field">
+            <span class="ui-label">Segment</span>
+            <select class="ui-select" [(ngModel)]="recoveryExportSegment" (change)="onRecoveryExportSegmentChange()">
+              <option value="recovery_all">All approved recovery</option>
+              <option value="recovery_domain_typo">Domain typo recovery</option>
+              <option value="recovery_name_typo">Name typo recovery</option>
+              <option value="recovery_manual_edit">Manual edits</option>
+            </select>
+          </label>
+
+          <label class="ui-field">
+            <span class="ui-label">Batch</span>
+            <input class="ui-input" type="number" min="1" [(ngModel)]="recoveryExportBatch" />
+          </label>
+
+          <label class="ui-field">
+            <span class="ui-label">Rows</span>
+            <input class="ui-input" type="number" min="1" max="1000" [(ngModel)]="recoveryExportLimit" />
+          </label>
+
+          <div class="verification-recovery-export__actions">
+            <button class="ui-button" type="button" (click)="loadRecoveryExportPreview()" [disabled]="recoveryExportLoading || actionLoading !== ''">
+              <span class="ui-spinner ui-spinner--button" *ngIf="recoveryExportLoading" aria-hidden="true"></span>
+              Preview
+            </button>
+            <button class="ui-button ui-button--primary" type="button" (click)="downloadRecoveryExportCsv()" [disabled]="recoveryExportDownloading || actionLoading !== ''">
+              <span class="ui-spinner ui-spinner--button" *ngIf="recoveryExportDownloading" aria-hidden="true"></span>
+              Download CSV
+            </button>
+          </div>
+        </div>
+
+        <div class="verification-recovery-export__summary" *ngIf="recoveryExportPreview">
+          <div>
+            <span>Segment</span>
+            <strong>{{ getRecoveryExportSegmentLabel(recoveryExportPreview.segment) }}</strong>
+          </div>
+          <div>
+            <span>Total</span>
+            <strong>{{ recoveryExportPreview.total | number }}</strong>
+          </div>
+          <div>
+            <span>Batch</span>
+            <strong>{{ recoveryExportPreview.batch }} / {{ recoveryExportPreview.totalBatches || 1 }}</strong>
+          </div>
+          <div>
+            <span>Preview rows</span>
+            <strong>{{ recoveryExportPreview.rows.length | number }}</strong>
+          </div>
+        </div>
+
+        <div class="verification-recovery-export__preview" *ngIf="recoveryExportPreview?.rows?.length">
+          <div class="verification-recovery-export__row verification-recovery-export__row--head">
+            <span>Email</span>
+            <span>Original</span>
+            <span>Reason</span>
+            <span>Eligibility</span>
+          </div>
+          <div class="verification-recovery-export__row" *ngFor="let row of recoveryExportPreview?.rows?.slice(0, 12)">
+            <div>
+              <strong>{{ row.email }}</strong>
+              <small>{{ row.exportDomain }}</small>
+            </div>
+            <div>
+              <strong>{{ row.originalEmail }}</strong>
+              <small>Email #{{ row.emailId }}</small>
+            </div>
+            <div>
+              <strong>{{ formatMapLabel(row.recoveryReason || row.segment) }}</strong>
+              <small>{{ row.recoveryConfidence || row.recoverySource || '-' }}</small>
+            </div>
+            <div>
+              <strong>{{ formatMapLabel(row.sendEligibility || row.verificationStatus) }}</strong>
+              <small>{{ row.doNotSendReason || row.verificationStatus }}</small>
+            </div>
+          </div>
+        </div>
+
+        <div class="verification-external-import">
+          <div class="verification-external-import__header">
+            <div>
+              <h3>External result import</h3>
+              <p>Paste the checked CSV result, preview it, then apply status changes.</p>
+            </div>
+          </div>
+
+          <div class="verification-external-import__controls">
+            <label class="ui-field">
+              <span class="ui-label">Provider</span>
+              <select class="ui-select" [(ngModel)]="externalImportProvider">
+                <option value="zerobounce">ZeroBounce</option>
+                <option value="neverbounce">NeverBounce</option>
+              </select>
+            </label>
+
+            <label class="ui-field verification-external-import__csv">
+              <span class="ui-label">Result CSV</span>
+              <textarea
+                class="ui-textarea"
+                rows="8"
+                [(ngModel)]="externalImportCsv"
+                placeholder="email,status&#10;client@gmail.com,valid"
+              ></textarea>
+            </label>
+
+            <div class="verification-recovery-export__actions">
+              <button class="ui-button" type="button" (click)="previewExternalResultImport()" [disabled]="externalImportLoading">
+                <span class="ui-spinner ui-spinner--button" *ngIf="externalImportLoading" aria-hidden="true"></span>
+                Preview import
+              </button>
+              <button class="ui-button ui-button--primary" type="button" (click)="applyExternalResultImport()" [disabled]="externalImportLoading || !externalImportPreview">
+                Apply import
+              </button>
+            </div>
+          </div>
+
+          <div class="verification-recovery-export__summary" *ngIf="externalImportPreview">
+            <div>
+              <span>Matched</span>
+              <strong>{{ externalImportPreview.matched | number }}</strong>
+            </div>
+            <div>
+              <span>Missing</span>
+              <strong>{{ externalImportPreview.missing | number }}</strong>
+            </div>
+            <div>
+              <span>Updated</span>
+              <strong>{{ externalImportPreview.updated | number }}</strong>
+            </div>
+            <div>
+              <span>Mode</span>
+              <strong>{{ externalImportPreview.dryRun ? 'Preview' : 'Applied' }}</strong>
+            </div>
+          </div>
+
+          <div class="verification-breakdown verification-external-import__breakdown" *ngIf="getExternalImportStatusRows().length">
+            <div *ngFor="let row of getExternalImportStatusRows()">
+              <span>{{ formatMapLabel(row.key) }}</span>
+              <strong>{{ row.count | number }}</strong>
+            </div>
+          </div>
+        </div>
+      </div>
+    </article>
+
     <div class="ui-grid ui-grid--two">
       <article class="ui-card">
         <div class="ui-card__header">

@@ -63,6 +63,60 @@ interface BounceRecoveryCandidate {
   suggestionEdited?: boolean;
 }
 
+type RecoveryExportSegment =
+  | 'recovery_all'
+  | 'recovery_domain_typo'
+  | 'recovery_name_typo'
+  | 'recovery_manual_edit';
+
+interface RecoveryExportPreviewRow {
+  email: string;
+  originalEmail: string;
+  emailId: number;
+  customerId?: number | null;
+  exportDomain: string;
+  segment: RecoveryExportSegment;
+  verificationStatus: string;
+  qualityScore: number;
+  acquisitionSource: string;
+  recoveryReason?: string;
+  recoveryConfidence?: string;
+  recoverySource?: string;
+  sendEligibility?: string;
+  doNotSendReason?: string;
+}
+
+interface RecoveryExportPreview {
+  segment: RecoveryExportSegment;
+  batch: number;
+  limit: number;
+  offset: number;
+  total: number;
+  totalBatches: number;
+  rows: RecoveryExportPreviewRow[];
+}
+
+interface ExternalResultImportSummary {
+  dryRun: boolean;
+  provider: 'zerobounce' | 'neverbounce';
+  received: number;
+  processed: number;
+  matched: number;
+  missing: number;
+  updated: number;
+  byMappedStatus: Record<string, number>;
+  rows: Array<{
+    email: string;
+    emailId: number | null;
+    providerStatus: string;
+    providerSubStatus: string | null;
+    mappedStatus: string;
+    action: string;
+    sendEligibility: string;
+    reasonCode: string | null;
+  }>;
+}
+
 interface SuppressionOverview {
   totals: {
     doNotSend: number;
@@ -121,6 +175,16 @@ export class VerificationComponent implements OnInit {
   bounceSearch = '';
   editingBounceId: number | null = null;
   bounceEditEmail = '';
+  recoveryExportSegment: RecoveryExportSegment = 'recovery_all';
+  recoveryExportBatch = 1;
+  recoveryExportLimit = 1000;
+  recoveryExportPreview: RecoveryExportPreview | null = null;
+  recoveryExportLoading = false;
+  recoveryExportDownloading = false;
+  externalImportProvider: 'zerobounce' | 'neverbounce' = 'zerobounce';
+  externalImportCsv = '';
+  externalImportPreview: ExternalResultImportSummary | null = null;
+  externalImportLoading = false;
   validationLimit = 1000;
   skipSmtp = false;
   suppressionOverview: SuppressionOverview = this.createEmptySuppressionOverview();
@@ -357,6 +421,74 @@ export class VerificationComponent implements OnInit {
     });
   }
 
+  onRecoveryExportSegmentChange() {
+    this.recoveryExportBatch = 1;
+    this.recoveryExportPreview = null;
+  }
+
+  loadRecoveryExportPreview() {
+    this.recoveryExportLoading = true;
+    this.actionMessage = '';
+    this.errorMessage = '';
+
+    this.http.get<RecoveryExportPreview>('/api/emails/neverbounce/preview', {
+      params: this.getRecoveryExportParams(),
+    }).subscribe({
+      next: (response) => {
+        this.recoveryExportPreview = response;
+        this.actionMessage = `Recovery export preview loaded: ${response.rows.length} rows in batch ${response.batch} of ${response.totalBatches || 1}.`;
+        this.recoveryExportLoading = false;
+      },
+      error: () => {
+        this.errorMessage = 'Recovery export preview could not be loaded.';
+        this.recoveryExportLoading = false;
+      },
+    });
+  }
+
+  downloadRecoveryExportCsv() {
+    this.recoveryExportDownloading = true;
+    this.actionMessage = '';
+    this.errorMessage = '';
+
+    this.http.get('/api/emails/neverbounce/export.csv', {
+      params: this.getRecoveryExportParams(),
+      responseType: 'blob',
+      observe: 'response',
+    }).subscribe({
+      next: (response) => {
+        const blob = response.body || new Blob([], { type: 'text/csv' });
+        const disposition = response.headers.get('content-disposition') || '';
+        const filenameMatch = disposition.match(/filename="([^"]+)"/);
+        const filename = filenameMatch?.[1] || this.getRecoveryExportFilename();
+        const url = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        link.click();
+        window.URL.revokeObjectURL(url);
+        this.actionMessage = `Downloaded ${filename}. Import the ZeroBounce/NeverBounce result after verification.`;
+        this.recoveryExportDownloading = false;
+      },
+      error: () => {
+        this.errorMessage = 'Recovery export CSV could not be downloaded.';
+        this.recoveryExportDownloading = false;
+      },
+    });
+  }
+
+  previewExternalResultImport() {
+    this.runExternalResultImport(true);
+  }
+
+  applyExternalResultImport() {
+    if (!confirm('Apply external validation results to email statuses and send eligibility?')) {
+      return;
+    }
+
+    this.runExternalResultImport(false);
+  }
+
   downloadDomainBatch(domain: string) {
     const params = new URLSearchParams({
       segment: 'domain',
@@ -451,6 +583,21 @@ export class VerificationComponent implements OnInit {
       .replace(/\b\w/g, (match) => match.toUpperCase());
   }
 
+  getRecoveryExportSegmentLabel(segment: RecoveryExportSegment): string {
+    const labels: Record<RecoveryExportSegment, string> = {
+      recovery_all: 'All approved recovery',
+      recovery_domain_typo: 'Domain typo recovery',
+      recovery_name_typo: 'Name typo recovery',
+      recovery_manual_edit: 'Manual edits',
+    };
+
+    return labels[segment] || this.formatMapLabel(segment);
+  }
+
+  getExternalImportStatusRows(): Array<{ key: string; count: number }> {
+    return this.toMapRows(this.externalImportPreview?.byMappedStatus || {}, 8);
+  }
+
   getElasticDoNotSendShare(): number {
     const total = Number(this.suppressionOverview.totals.doNotSend || 0);
     if (!total) {
@@ -480,6 +627,51 @@ export class VerificationComponent implements OnInit {
     }
 
     return `/api/verification/bounce-recovery?${params.toString()}`;
+  }
+
+  private getRecoveryExportParams(): Record<string, string> {
+    return {
+      segment: this.recoveryExportSegment,
+      batch: String(Math.max(Number(this.recoveryExportBatch) || 1, 1)),
+      limit: String(Math.min(Math.max(Number(this.recoveryExportLimit) || 1000, 1), 1000)),
+    };
+  }
+
+  private getRecoveryExportFilename(): string {
+    return `external-validation-${this.recoveryExportSegment.replace(/_/g, '-')}-batch-${String(this.recoveryExportBatch).padStart(3, '0')}.csv`;
+  }
+
+  private runExternalResultImport(dryRun: boolean) {
+    if (!this.externalImportCsv.trim()) {
+      this.errorMessage = 'Paste the external validation CSV before importing.';
+      return;
+    }
+
+    this.externalImportLoading = true;
+    this.actionMessage = '';
+    this.errorMessage = '';
+
+    this.http.post<any>(`/api/verification/external-results/${dryRun ? 'preview' : 'import'}`, {
+      provider: this.externalImportProvider,
+      csv: this.externalImportCsv,
+      sourceSegment: 'bounce_recovery',
+      batchName: `${this.externalImportProvider} recovery result import`,
+    }).subscribe({
+      next: (response) => {
+        this.externalImportPreview = response.result || null;
+        this.actionMessage = dryRun
+          ? `External result preview ready: ${this.externalImportPreview?.matched || 0} matched rows.`
+          : `External results imported: ${this.externalImportPreview?.updated || 0} email rows updated.`;
+        this.externalImportLoading = false;
+        if (!dryRun) {
+          this.loadValidation();
+        }
+      },
+      error: () => {
+        this.errorMessage = 'External validation results could not be processed.';
+        this.externalImportLoading = false;
+      },
+    });
   }
 
   private createEmptyOverview(): IntakeOverview {

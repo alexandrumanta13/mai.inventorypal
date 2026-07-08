@@ -21,8 +21,9 @@ import { EmailVerifierService } from '../services/email-verifier.service';
 import { ValidationIntakeGateService } from '../services/validation-intake-gate.service';
 import { BounceRecoveryService } from '../services/bounce-recovery.service';
 import { ElasticEmailIngestionService } from '../services/elastic-email-ingestion.service';
+import { ExternalValidationImportService } from '../services/external-validation-import.service';
 import { BounceRecoveryStatus } from '../entities/bounce-recovery-candidate.entity';
-import { EmailValidationSourceSegment } from '@shared/enums/email-validation.enum';
+import { EmailValidationSourceSegment, ExternalValidationProvider } from '@shared/enums/email-validation.enum';
 import { VerificationStatus } from '@shared/enums/verification-status.enum';
 import { VerificationJobData } from '../processors/verification.processor';
 import { TypoScanJobData } from '../processors/typo-scan.processor';
@@ -54,6 +55,7 @@ export class VerificationController {
     private readonly validationIntakeGateService: ValidationIntakeGateService,
     private readonly bounceRecoveryService: BounceRecoveryService,
     private readonly elasticEmailIngestionService: ElasticEmailIngestionService,
+    private readonly externalValidationImportService: ExternalValidationImportService,
   ) {}
 
   @Get('intake-overview')
@@ -187,6 +189,42 @@ export class VerificationController {
         dryRun: dryRun !== false,
         sourceSegment: EmailValidationSourceSegment.MANUAL,
         batchName: 'Elastic Email manual ingestion',
+      }),
+    };
+  }
+
+  @Post('external-results/preview')
+  async previewExternalValidationResults(
+    @Body('provider') provider: ExternalValidationProvider,
+    @Body('csv') csv: string,
+    @Body('sourceSegment') sourceSegment?: EmailValidationSourceSegment,
+  ) {
+    return {
+      success: true,
+      result: await this.externalValidationImportService.importCsv({
+        provider,
+        csv,
+        sourceSegment: sourceSegment || EmailValidationSourceSegment.UNKNOWN,
+        dryRun: true,
+      }),
+    };
+  }
+
+  @Post('external-results/import')
+  async importExternalValidationResults(
+    @Body('provider') provider: ExternalValidationProvider,
+    @Body('csv') csv: string,
+    @Body('sourceSegment') sourceSegment?: EmailValidationSourceSegment,
+    @Body('batchName') batchName?: string,
+  ) {
+    return {
+      success: true,
+      result: await this.externalValidationImportService.importCsv({
+        provider,
+        csv,
+        sourceSegment: sourceSegment || EmailValidationSourceSegment.UNKNOWN,
+        batchName,
+        dryRun: false,
       }),
     };
   }
