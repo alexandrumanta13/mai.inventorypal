@@ -245,4 +245,67 @@ describe('BounceRecoveryService', () => {
       suppressedAlready: true,
     });
   });
+
+  it('updates a pending bounce recovery suggestion with audit metadata', async () => {
+    bounceRecoveryRepository.findOne
+      .mockResolvedValueOnce({
+        id: 41,
+        bouncedEmail: 'catalina.dmitru@gmail.com',
+        suggestedEmail: 'catalina.dumitru@gmail.com',
+        status: BounceRecoveryStatus.PENDING,
+        metadata: { source: 'gmail_bounce' },
+      })
+      .mockResolvedValueOnce(null);
+    emailRepository.findOne.mockResolvedValueOnce({
+      id: 55,
+      email: 'catalina.dumitru86@gmail.com',
+      verificationStatus: VerificationStatus.PENDING,
+    });
+
+    const result = await service.updateSuggestion(
+      41,
+      'Catalina.Dumitru86@gmail.com',
+      'manual correction',
+    );
+
+    expect(bounceRecoveryRepository.update).toHaveBeenCalledWith(
+      41,
+      expect.objectContaining({
+        suggestedEmail: 'catalina.dumitru86@gmail.com',
+        note: 'manual correction',
+        metadata: expect.objectContaining({
+          existingSuggestedStatus: VerificationStatus.PENDING,
+          manuallyEditedSuggestion: true,
+          previousSuggestions: [
+            expect.objectContaining({
+              suggestedEmail: 'catalina.dumitru@gmail.com',
+            }),
+          ],
+        }),
+      }),
+    );
+    expect(result).toMatchObject({
+      updated: true,
+      suggestedEmail: 'catalina.dumitru86@gmail.com',
+      existingSuggestedStatus: VerificationStatus.PENDING,
+    });
+  });
+
+  it('rejects invalid manual bounce recovery suggestions', async () => {
+    bounceRecoveryRepository.findOne.mockResolvedValueOnce({
+      id: 42,
+      bouncedEmail: 'client@gamil.com',
+      suggestedEmail: 'client@gmail.com',
+      status: BounceRecoveryStatus.PENDING,
+      metadata: {},
+    });
+
+    const result = await service.updateSuggestion(42, 'not-an-email');
+
+    expect(bounceRecoveryRepository.update).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      updated: false,
+      reason: 'Suggested email is not valid',
+    });
+  });
 });

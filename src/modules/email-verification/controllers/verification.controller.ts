@@ -115,6 +115,18 @@ export class VerificationController {
     };
   }
 
+  @Post('bounce-recovery/:id/suggestion')
+  async updateBounceRecoverySuggestion(
+    @Param('id', ParseIntPipe) id: number,
+    @Body('suggestedEmail') suggestedEmail: string,
+    @Body('note') note?: string,
+  ) {
+    return {
+      success: true,
+      result: await this.bounceRecoveryService.updateSuggestion(id, suggestedEmail, note),
+    };
+  }
+
   @Post('bounce-recovery/:id/ignore')
   async ignoreBounceRecoveryCandidate(
     @Param('id', ParseIntPipe) id: number,

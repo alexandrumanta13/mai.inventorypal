@@ -60,6 +60,7 @@ interface BounceRecoveryCandidate {
   customerName?: string;
   currentEmailStatus?: string;
   existingSuggestedStatus?: string;
+  suggestionEdited?: boolean;
 }
 
 interface SuppressionOverview {
@@ -118,6 +119,8 @@ export class VerificationComponent implements OnInit {
   bounceOffset = 0;
   bounceStatus: 'pending' | 'approved' | 'ignored' = 'pending';
   bounceSearch = '';
+  editingBounceId: number | null = null;
+  bounceEditEmail = '';
   validationLimit = 1000;
   skipSmtp = false;
   suppressionOverview: SuppressionOverview = this.createEmptySuppressionOverview();
@@ -268,6 +271,54 @@ export class VerificationComponent implements OnInit {
       },
       error: () => {
         this.errorMessage = `Could not approve candidate #${candidate.id}.`;
+        this.actionLoading = '';
+      }
+    });
+  }
+
+  startBounceSuggestionEdit(candidate: BounceRecoveryCandidate) {
+    this.editingBounceId = candidate.id;
+    this.bounceEditEmail = candidate.suggestedEmail || '';
+    this.actionMessage = '';
+    this.errorMessage = '';
+  }
+
+  cancelBounceSuggestionEdit() {
+    this.editingBounceId = null;
+    this.bounceEditEmail = '';
+  }
+
+  saveBounceSuggestion(candidate: BounceRecoveryCandidate) {
+    const suggestedEmail = this.bounceEditEmail.trim().toLowerCase();
+
+    if (!suggestedEmail || !suggestedEmail.includes('@')) {
+      this.errorMessage = 'Enter a valid suggested email before saving.';
+      return;
+    }
+
+    this.actionLoading = `bounce-edit-${candidate.id}`;
+    this.actionMessage = '';
+    this.errorMessage = '';
+
+    this.http.post<any>(`/api/verification/bounce-recovery/${candidate.id}/suggestion`, {
+      suggestedEmail,
+      note: 'Manual suggestion edit from Bounce recovery UI',
+    }).subscribe({
+      next: (response) => {
+        if (!response.result?.updated) {
+          this.errorMessage = response.result?.reason || `Could not update candidate #${candidate.id}.`;
+          this.actionLoading = '';
+          return;
+        }
+
+        this.actionMessage = `Updated suggestion for candidate #${candidate.id}.`;
+        this.editingBounceId = null;
+        this.bounceEditEmail = '';
+        this.actionLoading = '';
+        this.refreshBounceRecovery();
+      },
+      error: () => {
+        this.errorMessage = `Could not update candidate #${candidate.id}.`;
         this.actionLoading = '';
       }
     });

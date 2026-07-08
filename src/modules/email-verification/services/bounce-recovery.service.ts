@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Queue } from 'bullmq';
+import { validate as validateEmail } from 'email-validator';
 import { Brackets, Repository } from 'typeorm';
 import { Customer } from '@modules/customers/entities/customer.entity';
 import { Email } from '@modules/emails/entities/email.entity';
@@ -380,6 +381,80 @@ export class BounceRecoveryService {
       emailId: emailRecord?.id || null,
       validationQueued: !protectedStatus,
       protectedSuggestedStatus: protectedStatus ? existing?.verificationStatus : null,
+    };
+  }
+
+  async updateSuggestion(id: number, suggestedEmail: string, note?: string) {
+    const candidate = await this.bounceRecoveryRepository.findOne({
+      where: { id, status: BounceRecoveryStatus.PENDING },
+    });
+
+    if (!candidate) {
+      return {
+        updated: false,
+        reason: 'Candidate not found or already resolved',
+      };
+    }
+
+    const normalizedSuggestion = this.normalizeEmail(suggestedEmail);
+    if (!normalizedSuggestion || !validateEmail(normalizedSuggestion)) {
+      return {
+        updated: false,
+        reason: 'Suggested email is not valid',
+      };
+    }
+
+    if (normalizedSuggestion === this.normalizeEmail(candidate.bouncedEmail)) {
+      return {
+        updated: false,
+        reason: 'Suggested email must be different from bounced email',
+      };
+    }
+
+    const duplicate = await this.bounceRecoveryRepository.findOne({
+      where: {
+        bouncedEmail: candidate.bouncedEmail,
+        suggestedEmail: normalizedSuggestion,
+        status: BounceRecoveryStatus.PENDING,
+      },
+    });
+
+    if (duplicate && Number(duplicate.id) !== Number(candidate.id)) {
+      return {
+        updated: false,
+        reason: `Suggestion already exists on candidate #${duplicate.id}`,
+      };
+    }
+
+    const previousSuggestions = Array.isArray(candidate.metadata?.previousSuggestions)
+      ? candidate.metadata.previousSuggestions
+      : [];
+    const existingSuggested = await this.emailRepository.findOne({
+      where: { email: normalizedSuggestion },
+    });
+
+    await this.bounceRecoveryRepository.update(candidate.id, {
+      suggestedEmail: normalizedSuggestion,
+      note: note || candidate.note || null,
+      metadata: {
+        ...(candidate.metadata || {}),
+        existingSuggestedStatus: existingSuggested?.verificationStatus || null,
+        manuallyEditedSuggestion: true,
+        previousSuggestions: [
+          ...previousSuggestions,
+          {
+            suggestedEmail: candidate.suggestedEmail,
+            editedAt: new Date().toISOString(),
+          },
+        ],
+      },
+    });
+
+    return {
+      updated: true,
+      id: candidate.id,
+      suggestedEmail: normalizedSuggestion,
+      existingSuggestedStatus: existingSuggested?.verificationStatus || null,
     };
   }
 

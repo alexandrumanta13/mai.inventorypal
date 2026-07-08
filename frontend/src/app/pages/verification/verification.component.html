@@ -332,8 +332,37 @@
               <small>{{ candidate.currentEmailStatus || 'bounce' }} · {{ candidate.bouncedAt || candidate.createdAt | date:'mediumDate' }}</small>
             </div>
             <div>
-              <strong>{{ candidate.suggestedEmail }}</strong>
-              <small>{{ getBounceResolutionLabel(candidate) }}</small>
+              <ng-container *ngIf="editingBounceId !== candidate.id">
+                <strong>{{ candidate.suggestedEmail }}</strong>
+                <small>{{ getBounceResolutionLabel(candidate) }}</small>
+              </ng-container>
+              <div class="verification-bounce__edit" *ngIf="editingBounceId === candidate.id">
+                <input
+                  class="ui-input verification-bounce__edit-input"
+                  type="email"
+                  [(ngModel)]="bounceEditEmail"
+                  (keyup.enter)="saveBounceSuggestion(candidate)"
+                />
+                <div class="verification-bounce__edit-actions">
+                  <button
+                    class="ui-button ui-button--sm ui-button--primary"
+                    type="button"
+                    (click)="saveBounceSuggestion(candidate)"
+                    [disabled]="actionLoading !== ''"
+                  >
+                    <span class="ui-spinner ui-spinner--button" *ngIf="actionLoading === 'bounce-edit-' + candidate.id" aria-hidden="true"></span>
+                    Save
+                  </button>
+                  <button
+                    class="ui-button ui-button--sm"
+                    type="button"
+                    (click)="cancelBounceSuggestionEdit()"
+                    [disabled]="actionLoading !== ''"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
             </div>
             <div>
               <div class="verification-bounce__evidence">
@@ -366,17 +395,26 @@
                 type="button"
                 *ngIf="candidate.status === 'pending'"
                 (click)="approveBounceCandidate(candidate)"
-                [disabled]="actionLoading !== ''"
+                [disabled]="actionLoading !== '' || editingBounceId === candidate.id"
               >
                 <span class="ui-spinner ui-spinner--button" *ngIf="actionLoading === 'bounce-approve-' + candidate.id" aria-hidden="true"></span>
                 Approve + validate
+              </button>
+              <button
+                class="ui-button ui-button--sm"
+                type="button"
+                *ngIf="candidate.status === 'pending' && editingBounceId !== candidate.id"
+                (click)="startBounceSuggestionEdit(candidate)"
+                [disabled]="actionLoading !== ''"
+              >
+                Edit
               </button>
               <button
                 class="ui-button ui-button--sm ui-button--danger"
                 type="button"
                 *ngIf="candidate.status === 'pending'"
                 (click)="ignoreBounceCandidate(candidate)"
-                [disabled]="actionLoading !== ''"
+                [disabled]="actionLoading !== '' || editingBounceId === candidate.id"
               >
                 Mark unsafe
               </button>

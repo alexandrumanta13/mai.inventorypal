@@ -339,6 +339,22 @@
   text-transform: none;
 }
 
+.verification-bounce__edit {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.verification-bounce__edit-input {
+  min-width: 0;
+  width: 100%;
+}
+
+.verification-bounce__edit-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
 .verification-bounce__actions {
   display: flex;
   justify-content: flex-end;
