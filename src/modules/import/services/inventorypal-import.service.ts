@@ -84,6 +84,18 @@ export interface RecoverableMissingEmailRow {
   alreadyRecovered: boolean;
   candidateEmailInList: boolean;
   candidateEmailStatus: string | null;
+  candidateSendEligibility?: string | null;
+  candidateDoNotSendReason?: string | null;
+  candidateAcquisitionSource?: string | null;
+  candidateTypoResolutionStatus?: string | null;
+  candidateLastValidationSource?: string | null;
+  candidateLastValidationAt?: Date | null;
+  candidateLastVerifiedAt?: Date | null;
+  candidateQualityScore?: number | null;
+  candidateValidationTrace?: string | null;
+  candidateSourceTrace?: string | null;
+  candidateIsManualIgnored?: boolean;
+  candidateNeedsExternalValidation?: boolean;
 }
 
 export interface RecoverableMissingEmailAudit {
@@ -1341,25 +1353,118 @@ export class InventoryPalImportService {
       },
     });
     const existingEmails = candidateEmails.length
-      ? await this.emailRepository.find({ where: { email: In(candidateEmails) } })
+      ? await this.emailRepository.find({
+          where: { email: In(candidateEmails) },
+          relations: ['sources'],
+        })
       : [];
     const recoveredSourceIdentifiers = new Set(
       recoveredSources.map((source) => source.sourceIdentifier).filter(Boolean),
     );
     const existingEmailsByAddress = new Map(existingEmails.map((email) => [email.email, email]));
 
-    const rows = mappedRows.map((row) => ({
-      ...row,
-      candidateEmailInList: existingEmailsByAddress.has(row.candidateEmail?.trim().toLowerCase()),
-      candidateEmailStatus: existingEmailsByAddress.get(row.candidateEmail?.trim().toLowerCase())?.verificationStatus || null,
-      alreadyRecovered: recoveredSourceIdentifiers.has(this.getRecoveredSourceIdentifier(row)),
-    }));
+    const rows = mappedRows.map((row) => {
+      const candidateEmail = row.candidateEmail?.trim().toLowerCase();
+      const existingEmail = existingEmailsByAddress.get(candidateEmail);
+      const candidateSourceTrace = this.getCandidateSourceTrace(existingEmail);
+      const candidateIsManualIgnored = this.isManualIgnoredRecoverableCandidate(existingEmail, candidateSourceTrace);
+      const candidateNeedsExternalValidation = this.needsExternalValidationForRecoverableCandidate(
+        existingEmail,
+        candidateIsManualIgnored,
+      );
+
+      return {
+        ...row,
+        candidateEmailInList: Boolean(existingEmail),
+        candidateEmailStatus: existingEmail?.verificationStatus || null,
+        candidateSendEligibility: existingEmail?.sendEligibility || null,
+        candidateDoNotSendReason: existingEmail?.doNotSendReason || null,
+        candidateAcquisitionSource: existingEmail?.acquisitionSource || null,
+        candidateTypoResolutionStatus: existingEmail?.typoResolutionStatus || null,
+        candidateLastValidationSource: existingEmail?.lastValidationSource || null,
+        candidateLastValidationAt: existingEmail?.lastValidationAt || null,
+        candidateLastVerifiedAt: existingEmail?.lastVerifiedAt || null,
+        candidateQualityScore: existingEmail?.qualityScore == null ? null : Number(existingEmail.qualityScore || 0),
+        candidateValidationTrace: this.getCandidateValidationTrace(existingEmail),
+        candidateSourceTrace,
+        candidateIsManualIgnored,
+        candidateNeedsExternalValidation,
+        alreadyRecovered: recoveredSourceIdentifiers.has(this.getRecoveredSourceIdentifier(row)),
+      };
+    });
 
     return {
       ...audit,
       alreadyRecoveredOrders: rows.filter((row) => row.alreadyRecovered).length,
       rows,
     };
+  }
+
+  private getCandidateSourceTrace(email?: Email | null): string | null {
+    if (!email?.sources?.length) {
+      return null;
+    }
+
+    return email.sources
+      .slice()
+      .sort((a, b) => {
+        const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        return dateB - dateA;
+      })
+      .slice(0, 8)
+      .map((source) => `${source.sourceType}:${source.sourceIdentifier || 'unknown'}`)
+      .join(' | ');
+  }
+
+  private getCandidateValidationTrace(email?: Email | null): string | null {
+    if (!email) {
+      return null;
+    }
+
+    return [
+      email.lastValidationSource ? `source=${email.lastValidationSource}` : null,
+      email.lastValidationAt ? `validatedAt=${new Date(email.lastValidationAt).toISOString()}` : null,
+      email.lastVerifiedAt ? `verifiedAt=${new Date(email.lastVerifiedAt).toISOString()}` : null,
+      email.hasValidSyntax !== null && email.hasValidSyntax !== undefined ? `syntax=${email.hasValidSyntax}` : null,
+      email.hasValidDns !== null && email.hasValidDns !== undefined ? `dns=${email.hasValidDns}` : null,
+      email.hasValidSmtp !== null && email.hasValidSmtp !== undefined ? `smtp=${email.hasValidSmtp}` : null,
+      email.smtpResultCode ? `smtpCode=${email.smtpResultCode}` : null,
+      email.smtpErrorMessage ? `smtpError=${email.smtpErrorMessage}` : null,
+    ].filter(Boolean).join(' | ') || null;
+  }
+
+  private isManualIgnoredRecoverableCandidate(email?: Email | null, sourceTrace?: string | null): boolean {
+    if (!email) {
+      return false;
+    }
+
+    return (
+      email.acquisitionSource === 'quality_gate_test' ||
+      email.typoResolutionStatus === 'ignored' ||
+      email.doNotSendReason === 'typo_ignored' ||
+      email.doNotSendReason === 'bounce_recovery_ignored' ||
+      Boolean(sourceTrace?.includes('quality_gate_test'))
+    );
+  }
+
+  private needsExternalValidationForRecoverableCandidate(
+    email?: Email | null,
+    isManualIgnored = false,
+  ): boolean {
+    if (!email || isManualIgnored) {
+      return false;
+    }
+
+    if (email.verificationStatus !== VerificationStatus.INVALID) {
+      return false;
+    }
+
+    if (['zerobounce', 'neverbounce', 'elastic_email'].includes(String(email.lastValidationSource || ''))) {
+      return false;
+    }
+
+    return email.doNotSendReason === 'invalid' || !email.doNotSendReason;
   }
 
   private async fetchRowsFromApi(options: { daysBack: number; limit: number }): Promise<SyncOrderRow[]> {

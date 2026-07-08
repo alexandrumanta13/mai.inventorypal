@@ -58,6 +58,18 @@ interface RecoverableMissingEmailRow {
   alreadyRecovered: boolean;
   candidateEmailInList: boolean;
   candidateEmailStatus: string | null;
+  candidateSendEligibility?: string | null;
+  candidateDoNotSendReason?: string | null;
+  candidateAcquisitionSource?: string | null;
+  candidateTypoResolutionStatus?: string | null;
+  candidateLastValidationSource?: string | null;
+  candidateLastValidationAt?: string | null;
+  candidateLastVerifiedAt?: string | null;
+  candidateQualityScore?: number | null;
+  candidateValidationTrace?: string | null;
+  candidateSourceTrace?: string | null;
+  candidateIsManualIgnored?: boolean;
+  candidateNeedsExternalValidation?: boolean;
 }
 
 interface RecoverableMissingEmailAudit {
@@ -97,7 +109,7 @@ interface Domain {
   is_active: boolean;
 }
 
-type RecoverableQueue = 'review' | 'auto' | 'ignored' | 'all';
+type RecoverableQueue = 'review' | 'auto' | 'validation' | 'ignored' | 'all';
 
 @Component({
   selector: 'app-import',
@@ -285,13 +297,24 @@ export class ImportComponent implements OnInit {
   }
 
   getAutoQueueRowsCount(): number {
-    return this.recoverableAudit.rows.filter((row) => row.confidence === 'high' || row.alreadyRecovered).length;
+    return this.recoverableAudit.rows.filter((row) =>
+      (row.confidence === 'high' || row.alreadyRecovered) &&
+      !this.isExternalValidationRecoverableRow(row) &&
+      !this.isIgnoredRecoverableRow(row)
+    ).length;
   }
 
   getReviewQueueRowsCount(): number {
     return this.recoverableAudit.rows.filter((row) =>
-      row.confidence === 'review' && !row.alreadyRecovered && !this.isIgnoredRecoverableRow(row)
+      row.confidence === 'review' &&
+      !row.alreadyRecovered &&
+      !this.isExternalValidationRecoverableRow(row) &&
+      !this.isIgnoredRecoverableRow(row)
     ).length;
+  }
+
+  getExternalValidationQueueRowsCount(): number {
+    return this.recoverableAudit.rows.filter((row) => this.isExternalValidationRecoverableRow(row)).length;
   }
 
   getIgnoredQueueRowsCount(): number {
@@ -330,6 +353,18 @@ export class ImportComponent implements OnInit {
       'candidate_domain_id',
       'candidate_domain',
       'confidence',
+      'validation_queue',
+      'candidate_email_status',
+      'candidate_send_eligibility',
+      'candidate_do_not_send_reason',
+      'candidate_acquisition_source',
+      'candidate_typo_resolution_status',
+      'candidate_quality_score',
+      'candidate_last_validation_source',
+      'candidate_last_validation_at',
+      'candidate_last_verified_at',
+      'candidate_validation_trace',
+      'candidate_source_trace',
       'candidate_emails_for_phone',
       'candidate_orders_for_phone',
     ];
@@ -350,6 +385,18 @@ export class ImportComponent implements OnInit {
       row.candidateDomainId,
       this.getCandidateDomainLabel(row),
       row.confidence,
+      this.isExternalValidationRecoverableRow(row) ? 'external_validation_required' : this.isIgnoredRecoverableRow(row) ? 'manual_or_suppressed_ignored' : '',
+      row.candidateEmailStatus || '',
+      row.candidateSendEligibility || '',
+      row.candidateDoNotSendReason || '',
+      row.candidateAcquisitionSource || '',
+      row.candidateTypoResolutionStatus || '',
+      row.candidateQualityScore ?? '',
+      row.candidateLastValidationSource || '',
+      row.candidateLastValidationAt || '',
+      row.candidateLastVerifiedAt || '',
+      row.candidateValidationTrace || '',
+      row.candidateSourceTrace || '',
       row.candidateEmailsForPhone,
       row.candidateOrdersForPhone,
     ]);
@@ -499,6 +546,42 @@ export class ImportComponent implements OnInit {
     return confidence === 'high' ? 'ui-badge--success' : 'ui-badge--warning';
   }
 
+  getRecoverableQualityLabel(row: RecoverableMissingEmailRow): string {
+    if (this.isExternalValidationRecoverableRow(row)) {
+      return 'needs external validation';
+    }
+
+    if (this.isIgnoredRecoverableRow(row)) {
+      return row.candidateIsManualIgnored ? 'manual ignored' : 'suppressed';
+    }
+
+    return row.candidateEmailStatus || 'new candidate';
+  }
+
+  getRecoverableQualityClass(row: RecoverableMissingEmailRow): string {
+    if (this.isExternalValidationRecoverableRow(row)) {
+      return 'ui-badge--warning';
+    }
+
+    if (this.isIgnoredRecoverableRow(row)) {
+      return 'ui-badge--danger';
+    }
+
+    if (row.candidateEmailStatus === 'valid') {
+      return 'ui-badge--success';
+    }
+
+    return 'ui-badge--info';
+  }
+
+  getRecoverableQualityDetail(row: RecoverableMissingEmailRow): string {
+    return [
+      row.candidateDoNotSendReason ? `reason: ${row.candidateDoNotSendReason}` : null,
+      row.candidateAcquisitionSource ? `source: ${row.candidateAcquisitionSource}` : null,
+      row.candidateLastValidationSource ? `validated by: ${row.candidateLastValidationSource}` : null,
+    ].filter(Boolean).join(' | ') || '-';
+  }
+
   getDomainLabel(row: { storeName?: string | null; storeUrl?: string | null; authorizedDomainId?: number }): string {
     return row.storeName || this.hostname(row.storeUrl) || (row.authorizedDomainId ? `Domain ${row.authorizedDomainId}` : '-');
   }
@@ -516,15 +599,37 @@ export class ImportComponent implements OnInit {
       return this.isIgnoredRecoverableRow(row);
     }
 
-    if (this.recoverableQueue === 'auto') {
-      return row.confidence === 'high' || row.alreadyRecovered;
+    if (this.recoverableQueue === 'validation') {
+      return this.isExternalValidationRecoverableRow(row);
     }
 
-    return row.confidence === 'review' && !row.alreadyRecovered && !this.isIgnoredRecoverableRow(row);
+    if (this.recoverableQueue === 'auto') {
+      return (row.confidence === 'high' || row.alreadyRecovered) &&
+        !this.isExternalValidationRecoverableRow(row) &&
+        !this.isIgnoredRecoverableRow(row);
+    }
+
+    return row.confidence === 'review' &&
+      !row.alreadyRecovered &&
+      !this.isExternalValidationRecoverableRow(row) &&
+      !this.isIgnoredRecoverableRow(row);
   }
 
   private isIgnoredRecoverableRow(row: RecoverableMissingEmailRow): boolean {
-    return ['invalid', 'disposable', 'unsubscribed'].includes(row.candidateEmailStatus || '');
+    if (this.isExternalValidationRecoverableRow(row)) {
+      return false;
+    }
+
+    return Boolean(row.candidateIsManualIgnored) ||
+      ['disposable', 'unsubscribed'].includes(row.candidateEmailStatus || '') ||
+      (
+        row.candidateEmailStatus === 'invalid' &&
+        ['zerobounce', 'neverbounce', 'elastic_email'].includes(row.candidateLastValidationSource || '')
+      );
+  }
+
+  private isExternalValidationRecoverableRow(row: RecoverableMissingEmailRow): boolean {
+    return Boolean(row.candidateNeedsExternalValidation);
   }
 
   private startAction(key: string, endpoint: string, body: Record<string, unknown>) {

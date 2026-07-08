@@ -181,7 +181,7 @@
       <div class="ui-card__header recoverable-audit__header">
         <div>
           <h2 class="ui-card__title">Email recovery & quality gate</h2>
-          <p class="ui-card__subtitle">High-confidence matches are auto-recovered; review rows can be recovered manually or marked as test/ignored</p>
+          <p class="ui-card__subtitle">High-confidence matches are auto-recovered; blocked candidates keep trace and can be exported for external validation</p>
         </div>
         <span class="ui-badge" [ngClass]="recoverableAudit.configured ? 'ui-badge--success' : 'ui-badge--warning'">
           {{ recoverableAudit.configured ? recoverableAudit.source : 'Needs source' }}
@@ -289,7 +289,11 @@
             <strong>{{ getReviewQueueRowsCount() | number }}</strong>
           </div>
           <div>
-            <span>Ignored / test</span>
+            <span>Needs validation</span>
+            <strong>{{ getExternalValidationQueueRowsCount() | number }}</strong>
+          </div>
+          <div>
+            <span>Manual ignored</span>
             <strong>{{ getIgnoredQueueRowsCount() | number }}</strong>
           </div>
           <div>
@@ -338,10 +342,19 @@
           <button
             class="recoverable-audit__queue"
             type="button"
+            [class.recoverable-audit__queue--active]="recoverableQueue === 'validation'"
+            (click)="setRecoverableQueue('validation')"
+          >
+            Needs validation
+            <strong>{{ getExternalValidationQueueRowsCount() | number }}</strong>
+          </button>
+          <button
+            class="recoverable-audit__queue"
+            type="button"
             [class.recoverable-audit__queue--active]="recoverableQueue === 'ignored'"
             (click)="setRecoverableQueue('ignored')"
           >
-            Ignored
+            Manual ignored
             <strong>{{ getIgnoredQueueRowsCount() | number }}</strong>
           </button>
           <button
@@ -400,6 +413,7 @@
                   <th>Domain</th>
                   <th>Phone</th>
                   <th>Matched email</th>
+                  <th>Quality state</th>
                   <th>Matched domain</th>
                   <th>Match</th>
                   <th>Last signal</th>
@@ -428,6 +442,18 @@
                       @if (row.candidateEmailStatus) {
                         <span class="ui-table__muted">{{ row.candidateEmailStatus }}</span>
                       }
+                    }
+                  </td>
+                  <td>
+                    <span class="ui-badge" [ngClass]="getRecoverableQualityClass(row)">
+                      {{ getRecoverableQualityLabel(row) }}
+                    </span>
+                    <div class="ui-table__muted">{{ getRecoverableQualityDetail(row) }}</div>
+                    @if (row.candidateValidationTrace) {
+                      <div class="ui-table__muted">{{ row.candidateValidationTrace }}</div>
+                    }
+                    @if (row.candidateSourceTrace) {
+                      <div class="ui-table__muted">{{ row.candidateSourceTrace }}</div>
                     }
                   </td>
                   <td>

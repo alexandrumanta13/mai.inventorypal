@@ -211,7 +211,7 @@
 
 .recoverable-audit__queues {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 0.65rem;
   margin-bottom: 1rem;
 }
@@ -259,7 +259,12 @@
 }
 
 .recoverable-audit__table .ui-table {
-  min-width: 1380px;
+  min-width: 1580px;
+}
+
+.recoverable-audit__table .ui-table__muted {
+  max-width: 360px;
+  overflow-wrap: anywhere;
 }
 
 .recoverable-audit__loading {
