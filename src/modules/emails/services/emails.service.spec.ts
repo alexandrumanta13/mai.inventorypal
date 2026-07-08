@@ -18,6 +18,9 @@ describe('EmailsService', () => {
     findOne: jest.Mock;
     save: jest.Mock;
   };
+  let bounceRecoveryRepository: {
+    createQueryBuilder: jest.Mock;
+  };
 
   beforeEach(() => {
     emailRepository = {
@@ -30,10 +33,14 @@ describe('EmailsService', () => {
       findOne: jest.fn().mockResolvedValue(null),
       save: jest.fn().mockResolvedValue({ id: 1 }),
     };
+    bounceRecoveryRepository = {
+      createQueryBuilder: jest.fn(),
+    };
 
     service = new EmailsService(
       emailRepository as any,
       emailSourceRepository as any,
+      bounceRecoveryRepository as any,
       new FilterValidator(),
       new SendEligibilityService(),
     );

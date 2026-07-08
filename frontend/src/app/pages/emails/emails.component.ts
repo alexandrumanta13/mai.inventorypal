@@ -92,7 +92,13 @@ interface TypoFullScanStatus {
 
 type TypoResolutionStatus = 'pending' | 'accepted' | 'ignored';
 type TypoResolutionAction = 'accept' | 'ignore' | 'reset';
-type NeverBounceSegment = 'typo_resolved' | 'domain';
+type NeverBounceSegment =
+  | 'typo_resolved'
+  | 'domain'
+  | 'recovery_all'
+  | 'recovery_domain_typo'
+  | 'recovery_name_typo'
+  | 'recovery_manual_edit';
 type CampaignEligibility = 'safe_to_send' | 'review' | 'pending';
 
 interface EmailDomainOption {
@@ -113,6 +119,11 @@ interface NeverBounceExportRow {
   acquisitionSource: string;
   firstName: string;
   lastName: string;
+  recoveryReason?: string;
+  recoveryConfidence?: string;
+  recoverySource?: string;
+  sendEligibility?: string;
+  doNotSendReason?: string;
 }
 
 interface NeverBouncePreview {
@@ -244,7 +255,7 @@ export class EmailsComponent implements OnInit, OnDestroy {
   typoResolving = false;
 
   // NeverBounce CSV export
-  neverBounceSegment: NeverBounceSegment = 'domain';
+  neverBounceSegment: NeverBounceSegment = 'recovery_all';
   neverBounceDomain = '';
   neverBounceBatch = 1;
   neverBounceLimit = 1000;
@@ -768,6 +779,9 @@ export class EmailsComponent implements OnInit, OnDestroy {
 
   onNeverBounceSegmentChange() {
     this.neverBounceBatch = 1;
+    if (this.neverBounceSegment !== 'domain') {
+      this.neverBounceDomain = '';
+    }
     this.neverBouncePreview = null;
   }
 
@@ -932,7 +946,7 @@ export class EmailsComponent implements OnInit, OnDestroy {
   private getNeverBounceFilename(): string {
     const label = this.neverBounceSegment === 'domain'
       ? `domain-${this.neverBounceDomain.replace(/[^a-z0-9]+/g, '-')}`
-      : 'typo-resolved';
+      : this.neverBounceSegment.replace(/_/g, '-');
 
     return `neverbounce-${label}-batch-${String(this.neverBounceBatch).padStart(3, '0')}.csv`;
   }

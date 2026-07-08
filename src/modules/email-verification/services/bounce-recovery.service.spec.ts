@@ -4,7 +4,7 @@ import {
   BounceRecoveryReason,
   BounceRecoveryStatus,
 } from '../entities/bounce-recovery-candidate.entity';
-import { SendEligibility } from '@shared/enums/email-validation.enum';
+import { ExternalValidationProvider, SendEligibility } from '@shared/enums/email-validation.enum';
 import { VerificationStatus } from '@shared/enums/verification-status.enum';
 
 describe('BounceRecoveryService', () => {
@@ -243,6 +243,49 @@ describe('BounceRecoveryService', () => {
       ignored: true,
       suppressedEmailId: 44,
       suppressedAlready: true,
+    });
+  });
+
+  it('keeps approved bounce recovery suggestions gated for external validation', async () => {
+    bounceRecoveryRepository.findOne.mockResolvedValueOnce({
+      id: 40,
+      bouncedEmail: 'client@gamil.com',
+      suggestedEmail: 'client@gmail.com',
+      reason: BounceRecoveryReason.DOMAIN_TYPO,
+      status: BounceRecoveryStatus.PENDING,
+      customerId: 21,
+      customer: {
+        first_name: 'Client',
+        last_name: 'Example',
+      },
+      metadata: {},
+    });
+    emailRepository.findOne.mockResolvedValueOnce(null);
+
+    const result = await service.approveCandidate(40);
+
+    expect(emailRepository.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        email: 'client@gmail.com',
+        hasTypo: true,
+        typoSuggestion: 'client@gamil.com',
+        typoResolutionStatus: 'accepted',
+        typoResolvedEmail: 'client@gmail.com',
+        smtpErrorMessage: 'Bounce recovery approved; external validation required before marketing sends',
+      }),
+    );
+    expect(sendEligibilityService.buildUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        verificationStatus: VerificationStatus.PENDING,
+        hasTypo: true,
+        typoResolutionStatus: 'accepted',
+      }),
+      ExternalValidationProvider.INTERNAL,
+    );
+    expect(result).toMatchObject({
+      approved: true,
+      suggestedEmail: 'client@gmail.com',
+      validationQueued: true,
     });
   });
 

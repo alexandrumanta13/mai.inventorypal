@@ -8,6 +8,11 @@ import { ImportSourceType } from '@shared/enums/import-source.enum';
 import { ExternalValidationProvider, SendEligibility } from '@shared/enums/email-validation.enum';
 import { FilterValidator } from '../../email-verification/validators/filter.validator';
 import { SendEligibilityService } from './send-eligibility.service';
+import {
+  BounceRecoveryCandidate,
+  BounceRecoveryReason,
+  BounceRecoveryStatus,
+} from '../../email-verification/entities/bounce-recovery-candidate.entity';
 
 export interface CreateEmailDto {
   email: string;
@@ -33,7 +38,14 @@ export interface StoreTypoCandidateOptions {
   smtpErrorMessage?: string;
 }
 
-export type NeverBounceExportSegment = 'typo_resolved' | 'typo_suggestions' | 'domain';
+export type NeverBounceExportSegment =
+  | 'typo_resolved'
+  | 'typo_suggestions'
+  | 'domain'
+  | 'recovery_all'
+  | 'recovery_domain_typo'
+  | 'recovery_name_typo'
+  | 'recovery_manual_edit';
 export type TypoResolutionStatus = 'pending' | 'accepted' | 'ignored';
 export type TypoResolutionAction = 'accept' | 'ignore' | 'reset';
 
@@ -57,6 +69,11 @@ export interface NeverBounceExportRow {
   acquisitionSource: string;
   firstName: string;
   lastName: string;
+  recoveryReason?: string;
+  recoveryConfidence?: string;
+  recoverySource?: string;
+  sendEligibility?: SendEligibility;
+  doNotSendReason?: string;
 }
 
 export interface NeverBounceExportPreview {
@@ -139,6 +156,8 @@ export class EmailsService {
     private readonly emailRepository: Repository<Email>,
     @InjectRepository(EmailSource)
     private readonly emailSourceRepository: Repository<EmailSource>,
+    @InjectRepository(BounceRecoveryCandidate)
+    private readonly bounceRecoveryRepository: Repository<BounceRecoveryCandidate>,
     private readonly filterValidator: FilterValidator,
     private readonly sendEligibilityService: SendEligibilityService,
   ) {}
@@ -702,7 +721,7 @@ export class EmailsService {
   async getNeverBounceExportPreview(
     options: NeverBounceExportOptions,
   ): Promise<NeverBounceExportPreview> {
-    const segment = options.segment === 'domain' ? 'domain' : 'typo_resolved';
+    const segment = this.normalizeNeverBounceSegment(options.segment);
     const limit = Math.min(Math.max(Number(options.limit) || 1000, 1), 1000);
     const batch = Math.max(Number(options.batch) || 1, 1);
     const offset = (batch - 1) * limit;
@@ -710,6 +729,15 @@ export class EmailsService {
 
     if (segment === 'domain' && !domain) {
       throw new Error('domain is required for domain NeverBounce exports');
+    }
+
+    if (this.isRecoveryNeverBounceSegment(segment)) {
+      return this.getRecoveryNeverBounceExportPreview({
+        segment,
+        batch,
+        limit,
+        offset,
+      });
     }
 
     const qb = this.emailRepository.createQueryBuilder('email');
@@ -775,6 +803,8 @@ export class EmailsService {
         acquisitionSource: emailRecord.acquisitionSource || '',
         firstName: emailRecord.firstName || '',
         lastName: emailRecord.lastName || '',
+        sendEligibility: emailRecord.sendEligibility,
+        doNotSendReason: emailRecord.doNotSendReason || '',
       });
     }
 
@@ -809,6 +839,11 @@ export class EmailsService {
       'acquisition_source',
       'first_name',
       'last_name',
+      'recovery_reason',
+      'recovery_confidence',
+      'recovery_source',
+      'send_eligibility',
+      'do_not_send_reason',
     ];
 
     const lines = [
@@ -827,6 +862,11 @@ export class EmailsService {
           row.acquisitionSource,
           row.firstName,
           row.lastName,
+          row.recoveryReason || '',
+          row.recoveryConfidence || '',
+          row.recoverySource || '',
+          row.sendEligibility || '',
+          row.doNotSendReason || '',
         ]
           .map((value) => this.csvEscape(value))
           .join(','),
@@ -836,13 +876,128 @@ export class EmailsService {
     const label =
       preview.segment === 'domain'
         ? `domain-${String(preview.domain).replace(/[^a-z0-9]+/g, '-')}`
-        : 'typo-resolved';
+        : preview.segment.replace(/_/g, '-');
 
     return {
       filename: `neverbounce-${label}-batch-${String(preview.batch).padStart(3, '0')}.csv`,
       csv: `${lines.join('\n')}\n`,
       preview,
     };
+  }
+
+  private async getRecoveryNeverBounceExportPreview(options: {
+    segment: NeverBounceExportSegment;
+    batch: number;
+    limit: number;
+    offset: number;
+  }): Promise<NeverBounceExportPreview> {
+    const qb = this.bounceRecoveryRepository
+      .createQueryBuilder('recovery')
+      .innerJoin(
+        Email,
+        'email',
+        "email.id = CAST(JSON_UNQUOTE(JSON_EXTRACT(recovery.metadata, '$.approvedEmailId')) AS UNSIGNED)",
+      )
+      .where('recovery.status = :status', { status: BounceRecoveryStatus.APPROVED });
+
+    if (options.segment === 'recovery_domain_typo') {
+      qb.andWhere('recovery.reason = :reason', { reason: BounceRecoveryReason.DOMAIN_TYPO });
+    }
+
+    if (options.segment === 'recovery_name_typo') {
+      qb.andWhere('recovery.reason = :reason', { reason: BounceRecoveryReason.NAME_LOCALPART_TYPO });
+    }
+
+    if (options.segment === 'recovery_manual_edit') {
+      qb.andWhere("JSON_EXTRACT(recovery.metadata, '$.manuallyEditedSuggestion') = true");
+    }
+
+    const total = await qb.clone().getCount();
+    const rawRows = await qb
+      .clone()
+      .select([
+        'recovery.id AS recoveryId',
+        'recovery.bouncedEmail AS bouncedEmail',
+        'recovery.suggestedEmail AS suggestedEmail',
+        'recovery.reason AS recoveryReason',
+        'recovery.confidence AS recoveryConfidence',
+        'recovery.source AS recoverySource',
+        'email.id AS emailId',
+        'email.customer_id AS customerId',
+        'email.email AS email',
+        'email.email_domain AS emailDomain',
+        'email.verificationStatus AS verificationStatus',
+        'email.qualityScore AS qualityScore',
+        'email.acquisitionSource AS acquisitionSource',
+        'email.firstName AS firstName',
+        'email.lastName AS lastName',
+        'email.sendEligibility AS sendEligibility',
+        'email.doNotSendReason AS doNotSendReason',
+      ])
+      .orderBy('recovery.id', 'ASC')
+      .skip(options.offset)
+      .take(options.limit)
+      .getRawMany();
+
+    const seen = new Set<string>();
+    const rows: NeverBounceExportRow[] = [];
+
+    for (const raw of rawRows) {
+      const exportEmail = this.normalizeEmail(raw.suggestedEmail || raw.email);
+      if (!exportEmail || !this.hasAcceptableEmailShape(exportEmail) || seen.has(exportEmail)) {
+        continue;
+      }
+
+      seen.add(exportEmail);
+      rows.push({
+        email: exportEmail,
+        originalEmail: raw.bouncedEmail || raw.email,
+        emailId: Number(raw.emailId),
+        customerId: raw.customerId ? Number(raw.customerId) : null,
+        originalDomain: String(raw.bouncedEmail || raw.email).split('@')[1] || raw.emailDomain || '',
+        exportDomain: exportEmail.split('@')[1] || '',
+        segment: options.segment,
+        verificationStatus: raw.verificationStatus,
+        qualityScore: Number(raw.qualityScore || 0),
+        acquisitionSource: raw.acquisitionSource || '',
+        firstName: raw.firstName || '',
+        lastName: raw.lastName || '',
+        recoveryReason: raw.recoveryReason || '',
+        recoveryConfidence: raw.recoveryConfidence || '',
+        recoverySource: raw.recoverySource || '',
+        sendEligibility: raw.sendEligibility,
+        doNotSendReason: raw.doNotSendReason || '',
+      });
+    }
+
+    return {
+      segment: options.segment,
+      batch: options.batch,
+      limit: options.limit,
+      offset: options.offset,
+      total,
+      totalBatches: Math.ceil(total / options.limit),
+      rows,
+    };
+  }
+
+  private normalizeNeverBounceSegment(segment?: NeverBounceExportSegment): NeverBounceExportSegment {
+    const allowed: NeverBounceExportSegment[] = [
+      'domain',
+      'typo_resolved',
+      'recovery_all',
+      'recovery_domain_typo',
+      'recovery_name_typo',
+      'recovery_manual_edit',
+    ];
+
+    return allowed.includes(segment as NeverBounceExportSegment)
+      ? segment as NeverBounceExportSegment
+      : 'typo_resolved';
+  }
+
+  private isRecoveryNeverBounceSegment(segment: NeverBounceExportSegment): boolean {
+    return segment.startsWith('recovery_');
   }
 
   private normalizeCampaignEligibility(

@@ -685,6 +685,20 @@ export class EmailVerifierService {
         return;
       }
 
+      const shouldKeepAcceptedTypoGate =
+        emailRecord.hasTypo === true &&
+        emailRecord.typoResolutionStatus === 'accepted' &&
+        !result.suggestedEmail;
+      const nextHasTypo = shouldKeepAcceptedTypoGate ? true : !!result.suggestedEmail;
+      const nextTypoSuggestion = shouldKeepAcceptedTypoGate
+        ? emailRecord.typoSuggestion
+        : result.suggestedEmail || null;
+      const nextTypoResolutionStatus = shouldKeepAcceptedTypoGate
+        ? emailRecord.typoResolutionStatus
+        : result.suggestedEmail
+          ? 'pending'
+          : emailRecord.typoResolutionStatus;
+
       // Update email record
       await this.emailRepository.update(emailRecord.id, {
         verificationStatus: result.status,
@@ -694,15 +708,15 @@ export class EmailVerifierService {
         hasValidSmtp: result.hasValidSmtp,
         isDisposable: result.isDisposable,
         isRoleBased: result.isRoleBased,
-        hasTypo: !!result.suggestedEmail,
-        typoSuggestion: result.suggestedEmail || null,
+        hasTypo: nextHasTypo,
+        typoSuggestion: nextTypoSuggestion,
         lastVerifiedAt: new Date(),
         ...this.sendEligibilityService.buildUpdate({
           verificationStatus: result.status,
           qualityScore: result.qualityScore,
           gmailCategory: emailRecord.gmailCategory,
-          hasTypo: !!result.suggestedEmail,
-          typoResolutionStatus: result.suggestedEmail ? 'pending' : emailRecord.typoResolutionStatus,
+          hasTypo: nextHasTypo,
+          typoResolutionStatus: nextTypoResolutionStatus,
           isDisposable: result.isDisposable,
           isRoleBased: result.isRoleBased,
           hasValidSyntax: result.hasValidSyntax,

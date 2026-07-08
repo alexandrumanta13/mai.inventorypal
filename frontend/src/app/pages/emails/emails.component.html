@@ -828,13 +828,17 @@
       <div class="ui-card__header">
         <div>
           <h2 class="ui-card__title">3. NeverBounce batch builder</h2>
-          <p class="ui-card__subtitle">Export accepted typo fixes or 1000-email commercial domain batches</p>
+          <p class="ui-card__subtitle">Export recovery-first lists, accepted typo fixes or 1000-email commercial domain batches</p>
         </div>
       </div>
       <div class="ui-card__body emails-page__neverbounce">
         <label class="ui-field">
           <span class="ui-label">Segment</span>
           <select class="ui-select" [(ngModel)]="neverBounceSegment" (change)="onNeverBounceSegmentChange()">
+            <option value="recovery_all">Recovery: all approved</option>
+            <option value="recovery_domain_typo">Recovery: domain typo</option>
+            <option value="recovery_name_typo">Recovery: name typo</option>
+            <option value="recovery_manual_edit">Recovery: manual edits</option>
             <option value="domain">Domain batch</option>
             <option value="typo_resolved">Resolved typo fixes</option>
           </select>
@@ -901,6 +905,7 @@
                   <th>Domain</th>
                   <th>Status</th>
                   <th>Source</th>
+                  <th>Recovery</th>
                 </tr>
               </thead>
               <tbody>
@@ -914,6 +919,10 @@
                     </span>
                   </td>
                   <td class="ui-table__muted">{{ row.acquisitionSource || '-' }}</td>
+                  <td class="ui-table__muted">
+                    {{ row.recoveryReason || row.segment }}
+                    <span *ngIf="row.recoveryConfidence"> · {{ row.recoveryConfidence }}</span>
+                  </td>
                 </tr>
               </tbody>
             </table>
