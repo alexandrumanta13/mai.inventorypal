@@ -152,8 +152,8 @@ npx pm2 stop inventorypal-email 2>/dev/null || true
 npx pm2 delete inventorypal-email 2>/dev/null || true
 
 if npx pm2 describe inventorypal-email-api >/dev/null 2>&1; then
-  echo "Reloading API process only..."
-  npx pm2 reload inventorypal-email-api --update-env
+  echo "Reloading API process from ecosystem config..."
+  npx pm2 reload ecosystem.config.js --only inventorypal-email-api --env production --update-env
 else
   echo "Starting API process..."
   npx pm2 start ecosystem.config.js --only inventorypal-email-api --env production

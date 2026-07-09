@@ -194,8 +194,8 @@ pm2 delete inventorypal-email &> /dev/null || true
 
 # Check if API is already running
 if pm2 describe inventorypal-email-api &> /dev/null; then
-  echo -e "${YELLOW}Reloading API process only...${NC}"
-  NODE_ENV=production pm2 reload inventorypal-email-api --update-env
+  echo -e "${YELLOW}Reloading API process from ecosystem config...${NC}"
+  pm2 reload ecosystem.config.js --only inventorypal-email-api --env production --update-env
   print_success "API reloaded"
 else
   echo -e "${YELLOW}Starting API process...${NC}"
