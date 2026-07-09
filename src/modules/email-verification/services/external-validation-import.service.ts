@@ -29,6 +29,7 @@ export interface ExternalValidationRowsImportOptions {
   sourceSegment?: EmailValidationSourceSegment;
   batchName?: string;
   metadata?: Record<string, any>;
+  existingBatchId?: number | null;
 }
 
 export interface ExternalValidationImportResult {
@@ -111,21 +112,14 @@ export class ExternalValidationImportService {
     };
     const batch = dryRun
       ? null
-      : await this.batchRepository.save(
-          this.batchRepository.create({
-            provider,
-            status: EmailValidationBatchStatus.COMPLETED,
-            sourceSegment: options.sourceSegment || EmailValidationSourceSegment.UNKNOWN,
-            name: options.batchName || `${provider} CSV result import`,
-            totalRecords: rows.length,
-            submittedRecords: rows.length,
-            submittedAt: new Date(),
-            completedAt: new Date(),
-            metadata: {
-              ...(options.metadata || {}),
-            },
-          }),
-        );
+      : await this.resolveBatchForImport({
+          existingBatchId: options.existingBatchId,
+          provider,
+          sourceSegment: options.sourceSegment,
+          batchName: options.batchName,
+          rowsCount: rows.length,
+          metadata: options.metadata,
+        });
 
     for (const row of rows) {
       await this.processRow(row, provider, result, dryRun, batch?.id || null);
@@ -133,6 +127,7 @@ export class ExternalValidationImportService {
 
     if (batch && !dryRun) {
       await this.batchRepository.update(batch.id, {
+        status: EmailValidationBatchStatus.COMPLETED,
         processedRecords: result.processed,
         validCount: result.byMappedStatus[EmailValidationMappedStatus.VALID] || 0,
         invalidCount: result.byMappedStatus[EmailValidationMappedStatus.INVALID] || 0,
@@ -140,10 +135,46 @@ export class ExternalValidationImportService {
         unknownCount: result.byMappedStatus[EmailValidationMappedStatus.UNKNOWN] || 0,
         catchAllCount: result.byMappedStatus[EmailValidationMappedStatus.CATCH_ALL] || 0,
         disposableCount: result.byMappedStatus[EmailValidationMappedStatus.DISPOSABLE] || 0,
+        completedAt: new Date(),
       });
     }
 
     return result;
+  }
+
+  private async resolveBatchForImport(options: {
+    existingBatchId?: number | null;
+    provider: ExternalValidationProvider;
+    sourceSegment?: EmailValidationSourceSegment;
+    batchName?: string;
+    rowsCount: number;
+    metadata?: Record<string, any>;
+  }): Promise<EmailValidationBatch> {
+    if (options.existingBatchId) {
+      const existingBatch = await this.batchRepository.findOne({
+        where: { id: options.existingBatchId },
+      });
+
+      if (existingBatch) {
+        return existingBatch;
+      }
+    }
+
+    return this.batchRepository.save(
+      this.batchRepository.create({
+        provider: options.provider,
+        status: EmailValidationBatchStatus.COMPLETED,
+        sourceSegment: options.sourceSegment || EmailValidationSourceSegment.UNKNOWN,
+        name: options.batchName || `${options.provider} CSV result import`,
+        totalRecords: options.rowsCount,
+        submittedRecords: options.rowsCount,
+        submittedAt: new Date(),
+        completedAt: new Date(),
+        metadata: {
+          ...(options.metadata || {}),
+        },
+      }),
+    );
   }
 
   private normalizeInputRow(row: ExternalValidationInputRow): NormalizedExternalValidationRow | null {

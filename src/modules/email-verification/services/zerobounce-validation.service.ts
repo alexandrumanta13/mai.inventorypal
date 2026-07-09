@@ -10,12 +10,14 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, SelectQueryBuilder } from 'typeorm';
 import { Email } from '@modules/emails/entities/email.entity';
 import {
+  EmailValidationBatchStatus,
   EmailValidationMappedStatus,
   EmailValidationSourceSegment,
   ExternalValidationProvider,
   SendEligibility,
 } from '@shared/enums/email-validation.enum';
 import { VerificationStatus } from '@shared/enums/verification-status.enum';
+import { EmailValidationBatch } from '../entities/email-validation-batch.entity';
 import { EmailValidationEvent } from '../entities/email-validation-event.entity';
 import {
   ExternalValidationImportResult,
@@ -78,6 +80,8 @@ export class ZeroBounceValidationService {
     private readonly configService: ConfigService,
     @InjectRepository(Email)
     private readonly emailRepository: Repository<Email>,
+    @InjectRepository(EmailValidationBatch)
+    private readonly batchRepository: Repository<EmailValidationBatch>,
     @InjectRepository(EmailValidationEvent)
     private readonly eventRepository: Repository<EmailValidationEvent>,
     private readonly externalValidationImportService: ExternalValidationImportService,
@@ -196,36 +200,84 @@ export class ZeroBounceValidationService {
       );
     }
 
+    const submittedRows = preview.rows.map((row) => ({
+      id: row.id,
+      email: row.email,
+      source: row.source,
+      verificationStatus: row.verificationStatus,
+      sendEligibility: row.sendEligibility,
+      doNotSendReason: row.doNotSendReason,
+    }));
+    const sourceSegment = this.mapSourceSegment(preview.segment);
+    const batch = await this.createSubmittedBatch({
+      segment: preview.segment,
+      sourceSegment,
+      submittedRows,
+      creditsBefore: preview.credits,
+      totalAvailable: preview.total,
+    });
     const payload = {
       api_key: apiKey,
-      email_batch: preview.rows.map((row) => ({
+      email_batch: submittedRows.map((row) => ({
         email_address: row.email,
       })),
     };
 
-    const response = await this.postZeroBounce('validatebatch', payload);
-    const providerRows = this.normalizeBatchResponse(response, preview.rows);
-    const importResult = await this.externalValidationImportService.importRows({
-      provider: ExternalValidationProvider.ZEROBOUNCE,
-      rows: providerRows,
-      dryRun: false,
-      sourceSegment: this.mapSourceSegment(preview.segment),
-      batchName: `ZeroBounce API ${preview.segment}`,
-      metadata: {
-        source: 'zerobounce_api',
-        segment: preview.segment,
-        creditsBefore: preview.credits,
-        submitted: preview.rows.length,
-      },
-    });
+    this.logger.log(
+      `ZeroBounce batch ${batch.id} submitted: segment=${preview.segment}, rows=${submittedRows.length}, creditsBefore=${preview.credits ?? 'unknown'}`,
+    );
 
-    return {
-      dryRun: false,
-      preview,
-      submitted: preview.rows.length,
-      creditsBefore: preview.credits,
-      importResult,
-    };
+    let response: any;
+    try {
+      response = await this.postZeroBounce('validatebatch', payload);
+      await this.recordProviderResponse(batch.id, {
+        segment: preview.segment,
+        submittedRows,
+        creditsBefore: preview.credits,
+        totalAvailable: preview.total,
+        response,
+      });
+
+      const providerRows = this.normalizeBatchResponse(response, preview.rows);
+      const importResult = await this.externalValidationImportService.importRows({
+        provider: ExternalValidationProvider.ZEROBOUNCE,
+        rows: providerRows,
+        dryRun: false,
+        sourceSegment,
+        batchName: `ZeroBounce API ${preview.segment}`,
+        existingBatchId: batch.id,
+        metadata: {
+          source: 'zerobounce_api',
+          segment: preview.segment,
+          creditsBefore: preview.credits,
+          submitted: preview.rows.length,
+        },
+      });
+
+      this.logger.log(
+        `ZeroBounce batch ${batch.id} completed: submitted=${submittedRows.length}, processed=${importResult.processed}, updated=${importResult.updated}`,
+      );
+
+      return {
+        dryRun: false,
+        preview,
+        submitted: preview.rows.length,
+        creditsBefore: preview.credits,
+        importResult,
+      };
+    } catch (error) {
+      await this.markSubmittedBatchFailed(batch.id, error, {
+        segment: preview.segment,
+        submittedRows,
+        creditsBefore: preview.credits,
+        totalAvailable: preview.total,
+        response,
+      });
+      this.logger.error(
+        `ZeroBounce batch ${batch.id} failed after submitting ${submittedRows.length} rows: ${this.errorMessage(error)}`,
+      );
+      throw error;
+    }
   }
 
   async excludeFromExternalValidation(options: {
@@ -338,6 +390,141 @@ export class ZeroBounceValidationService {
         raw: row,
       };
     }).filter((row: ExternalValidationInputRow) => !!row.email);
+  }
+
+  private async createSubmittedBatch(options: {
+    segment: ZeroBounceSegment;
+    sourceSegment: EmailValidationSourceSegment;
+    submittedRows: Array<{
+      id: number;
+      email: string;
+      source: string | null;
+      verificationStatus: VerificationStatus;
+      sendEligibility: SendEligibility;
+      doNotSendReason: string | null;
+    }>;
+    creditsBefore: number | null;
+    totalAvailable: number;
+  }): Promise<EmailValidationBatch> {
+    const submittedAt = new Date();
+
+    return this.batchRepository.save(
+      this.batchRepository.create({
+        provider: ExternalValidationProvider.ZEROBOUNCE,
+        status: EmailValidationBatchStatus.SUBMITTED,
+        sourceSegment: options.sourceSegment,
+        name: `ZeroBounce API ${options.segment}`,
+        totalRecords: options.totalAvailable,
+        submittedRecords: options.submittedRows.length,
+        submittedAt,
+        metadata: {
+          source: 'zerobounce_api',
+          segment: options.segment,
+          creditsBefore: options.creditsBefore,
+          submittedAt: submittedAt.toISOString(),
+          submitted: options.submittedRows.length,
+          submittedRows: options.submittedRows,
+          request: {
+            endpoint: 'validatebatch',
+            emailBatch: options.submittedRows.map((row) => ({
+              email_address: row.email,
+              email_id: row.id,
+            })),
+          },
+        },
+      }),
+    );
+  }
+
+  private async recordProviderResponse(batchId: number, options: {
+    segment: ZeroBounceSegment;
+    submittedRows: Array<{ id: number; email: string; source: string | null }>;
+    creditsBefore: number | null;
+    totalAvailable: number;
+    response: any;
+  }): Promise<void> {
+    const responseRows = Array.isArray(options.response?.email_batch)
+      ? options.response.email_batch
+      : [];
+    const errors = Array.isArray(options.response?.errors)
+      ? options.response.errors
+      : [];
+
+    await this.batchRepository.update(batchId, {
+      status: EmailValidationBatchStatus.RUNNING,
+      metadata: {
+        source: 'zerobounce_api',
+        segment: options.segment,
+        creditsBefore: options.creditsBefore,
+        totalAvailable: options.totalAvailable,
+        submitted: options.submittedRows.length,
+        submittedRows: options.submittedRows,
+        request: {
+          endpoint: 'validatebatch',
+          emailBatch: options.submittedRows.map((row) => ({
+            email_address: row.email,
+            email_id: row.id,
+          })),
+        },
+        providerResponseReceivedAt: new Date().toISOString(),
+        providerResponseSummary: this.summarizeZeroBounceResponse(responseRows, errors),
+        providerResponse: options.response,
+      } as any,
+    });
+  }
+
+  private async markSubmittedBatchFailed(batchId: number, error: unknown, options: {
+    segment: ZeroBounceSegment;
+    submittedRows: Array<{ id: number; email: string; source: string | null }>;
+    creditsBefore: number | null;
+    totalAvailable: number;
+    response?: any;
+  }): Promise<void> {
+    await this.batchRepository.update(batchId, {
+      status: EmailValidationBatchStatus.FAILED,
+      errorMessage: this.errorMessage(error),
+      completedAt: new Date(),
+      metadata: {
+        source: 'zerobounce_api',
+        segment: options.segment,
+        creditsBefore: options.creditsBefore,
+        totalAvailable: options.totalAvailable,
+        submitted: options.submittedRows.length,
+        submittedRows: options.submittedRows,
+        request: {
+          endpoint: 'validatebatch',
+          emailBatch: options.submittedRows.map((row) => ({
+            email_address: row.email,
+            email_id: row.id,
+          })),
+        },
+        failedAt: new Date().toISOString(),
+        error: this.errorMessage(error),
+        providerResponse: options.response || null,
+      } as any,
+    });
+  }
+
+  private summarizeZeroBounceResponse(rows: any[], errors: any[]): Record<string, any> {
+    const byStatus = rows.reduce((acc, row) => {
+      const status = String(row?.status || 'unknown').toLowerCase();
+      acc[status] = (acc[status] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+
+    return {
+      rows: rows.length,
+      errors: errors.length,
+      byStatus,
+    };
+  }
+
+  private errorMessage(error: unknown): string {
+    if (error instanceof Error) {
+      return error.message;
+    }
+
+    return String(error || 'Unknown error');
   }
 
   private mapSourceSegment(segment: ZeroBounceSegment): EmailValidationSourceSegment {

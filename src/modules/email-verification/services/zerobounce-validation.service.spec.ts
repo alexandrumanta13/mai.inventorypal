@@ -15,6 +15,11 @@ describe('ZeroBounceValidationService', () => {
     findOne: jest.Mock;
     update: jest.Mock;
   };
+  let batchRepository: {
+    create: jest.Mock;
+    save: jest.Mock;
+    update: jest.Mock;
+  };
   let eventRepository: {
     create: jest.Mock;
     save: jest.Mock;
@@ -33,6 +38,11 @@ describe('ZeroBounceValidationService', () => {
       findOne: jest.fn(),
       update: jest.fn().mockResolvedValue({ affected: 1 }),
     };
+    batchRepository = {
+      create: jest.fn((row) => row),
+      save: jest.fn(async (row) => ({ id: 25, ...row })),
+      update: jest.fn().mockResolvedValue({ affected: 1 }),
+    };
     eventRepository = {
       create: jest.fn((row) => row),
       save: jest.fn().mockResolvedValue({ id: 91 }),
@@ -43,6 +53,7 @@ describe('ZeroBounceValidationService', () => {
     service = new ZeroBounceValidationService(
       configService as any,
       emailRepository as any,
+      batchRepository as any,
       eventRepository as any,
       externalValidationImportService as unknown as ExternalValidationImportService,
     );
