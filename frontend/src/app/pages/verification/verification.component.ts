@@ -117,6 +117,42 @@ interface ExternalResultImportSummary {
   }>;
 }
 
+type ZeroBounceSegment = 'smtp_failed_internal' | 'typo_resolved' | 'external_review';
+
+interface ZeroBounceCredits {
+  configured: boolean;
+  credits: number | null;
+  validKey: boolean | null;
+}
+
+interface ZeroBouncePreview {
+  configured: boolean;
+  validKey: boolean | null;
+  segment: ZeroBounceSegment;
+  limit: number;
+  total: number;
+  estimatedCredits: number;
+  credits: number | null;
+  rows: Array<{
+    id: number;
+    email: string;
+    verificationStatus: string;
+    sendEligibility: string;
+    doNotSendReason: string | null;
+    lastValidationSource: string | null;
+    lastValidationAt: string | null;
+    source: string | null;
+  }>;
+}
+
+interface ZeroBounceRunResult {
+  dryRun: boolean;
+  preview: ZeroBouncePreview;
+  submitted: number;
+  creditsBefore: number | null;
+  importResult: ExternalResultImportSummary | null;
+}
+
 interface SuppressionOverview {
   totals: {
     doNotSend: number;
@@ -185,6 +221,16 @@ export class VerificationComponent implements OnInit {
   externalImportCsv = '';
   externalImportPreview: ExternalResultImportSummary | null = null;
   externalImportLoading = false;
+  zeroBounceCredits: ZeroBounceCredits = {
+    configured: false,
+    credits: null,
+    validKey: null,
+  };
+  zeroBounceSegment: ZeroBounceSegment = 'smtp_failed_internal';
+  zeroBounceLimit = 35;
+  zeroBouncePreview: ZeroBouncePreview | null = null;
+  zeroBounceRunResult: ZeroBounceRunResult | null = null;
+  zeroBounceLoading = '';
   validationLimit = 1000;
   skipSmtp = false;
   suppressionOverview: SuppressionOverview = this.createEmptySuppressionOverview();
@@ -223,6 +269,9 @@ export class VerificationComponent implements OnInit {
       suppression: this.http.get<any>('/api/verification/suppression-overview').pipe(
         catchError(() => of({ overview: this.createEmptySuppressionOverview() })),
       ),
+      zeroBounceCredits: this.http.get<any>('/api/verification/zerobounce/credits').pipe(
+        catchError(() => of({ result: this.zeroBounceCredits })),
+      ),
     }).subscribe({
       next: (response) => {
         this.overview = response.overview.overview || this.createEmptyOverview();
@@ -232,6 +281,7 @@ export class VerificationComponent implements OnInit {
         this.bounceTotal = Number(response.bounceList.result?.total || 0);
         this.bounceCandidates = response.bounceList.result?.items || [];
         this.setSuppressionOverview(response.suppression.overview || this.createEmptySuppressionOverview());
+        this.zeroBounceCredits = response.zeroBounceCredits.result || this.zeroBounceCredits;
         this.lastUpdated = new Date();
         this.loading = false;
       },
@@ -489,6 +539,84 @@ export class VerificationComponent implements OnInit {
     this.runExternalResultImport(false);
   }
 
+  refreshZeroBounceCredits() {
+    this.zeroBounceLoading = 'credits';
+    this.errorMessage = '';
+
+    this.http.get<any>('/api/verification/zerobounce/credits').subscribe({
+      next: (response) => {
+        this.zeroBounceCredits = response.result || this.zeroBounceCredits;
+        this.zeroBounceLoading = '';
+      },
+      error: () => {
+        this.errorMessage = 'ZeroBounce credits could not be loaded.';
+        this.zeroBounceLoading = '';
+      },
+    });
+  }
+
+  previewZeroBounceSegment() {
+    this.zeroBounceLoading = 'preview';
+    this.zeroBounceRunResult = null;
+    this.actionMessage = '';
+    this.errorMessage = '';
+
+    this.http.get<any>('/api/verification/zerobounce/segments/preview', {
+      params: {
+        segment: this.zeroBounceSegment,
+        limit: String(this.normalizeZeroBounceLimit()),
+      },
+    }).subscribe({
+      next: (response) => {
+        this.zeroBouncePreview = response.result || null;
+        this.zeroBounceCredits = {
+          configured: this.zeroBouncePreview?.configured || false,
+          credits: this.zeroBouncePreview?.credits ?? this.zeroBounceCredits.credits,
+          validKey: this.zeroBouncePreview?.validKey ?? this.zeroBounceCredits.validKey,
+        };
+        this.actionMessage = `ZeroBounce preview ready: ${this.zeroBouncePreview?.rows.length || 0} emails in this batch.`;
+        this.zeroBounceLoading = '';
+      },
+      error: () => {
+        this.errorMessage = 'ZeroBounce preview could not be loaded.';
+        this.zeroBounceLoading = '';
+      },
+    });
+  }
+
+  runZeroBounceValidation() {
+    if (!this.zeroBouncePreview) {
+      this.errorMessage = 'Preview the ZeroBounce segment before running validation.';
+      return;
+    }
+
+    if (!confirm(`Validate ${this.zeroBouncePreview.rows.length} emails with ZeroBounce API?`)) {
+      return;
+    }
+
+    this.zeroBounceLoading = 'run';
+    this.actionMessage = '';
+    this.errorMessage = '';
+
+    this.http.post<any>('/api/verification/zerobounce/validate', {
+      segment: this.zeroBounceSegment,
+      limit: this.normalizeZeroBounceLimit(),
+      dryRun: false,
+    }).subscribe({
+      next: (response) => {
+        this.zeroBounceRunResult = response.result || null;
+        this.externalImportPreview = this.zeroBounceRunResult?.importResult || this.externalImportPreview;
+        this.actionMessage = `ZeroBounce validation applied: ${this.zeroBounceRunResult?.importResult?.updated || 0} email rows updated.`;
+        this.zeroBounceLoading = '';
+        this.loadValidation();
+      },
+      error: (error) => {
+        this.errorMessage = error?.error?.message || 'ZeroBounce validation could not be completed.';
+        this.zeroBounceLoading = '';
+      },
+    });
+  }
+
   downloadDomainBatch(domain: string) {
     const params = new URLSearchParams({
       segment: 'domain',
@@ -598,6 +726,20 @@ export class VerificationComponent implements OnInit {
     return this.toMapRows(this.externalImportPreview?.byMappedStatus || {}, 8);
   }
 
+  getZeroBounceSegmentLabel(segment: ZeroBounceSegment): string {
+    const labels: Record<ZeroBounceSegment, string> = {
+      smtp_failed_internal: 'SMTP failed internally',
+      typo_resolved: 'Resolved typo recovery',
+      external_review: 'External review queue',
+    };
+
+    return labels[segment] || this.formatMapLabel(segment);
+  }
+
+  getZeroBounceStatusRows(): Array<{ key: string; count: number }> {
+    return this.toMapRows(this.zeroBounceRunResult?.importResult?.byMappedStatus || {}, 8);
+  }
+
   getElasticDoNotSendShare(): number {
     const total = Number(this.suppressionOverview.totals.doNotSend || 0);
     if (!total) {
@@ -639,6 +781,11 @@ export class VerificationComponent implements OnInit {
 
   private getRecoveryExportFilename(): string {
     return `external-validation-${this.recoveryExportSegment.replace(/_/g, '-')}-batch-${String(this.recoveryExportBatch).padStart(3, '0')}.csv`;
+  }
+
+  private normalizeZeroBounceLimit(): number {
+    const parsed = Number(this.zeroBounceLimit) || 35;
+    return Math.min(Math.max(Math.floor(parsed), 1), 100);
   }
 
   private runExternalResultImport(dryRun: boolean) {

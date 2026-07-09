@@ -441,6 +441,101 @@
       </div>
     </article>
 
+    <article class="ui-card verification-zerobounce">
+      <div class="ui-card__header">
+        <div>
+          <h2 class="ui-card__title">ZeroBounce API validation</h2>
+          <p class="ui-card__subtitle">Direct validation for recovered and risky email batches</p>
+        </div>
+        <span
+          class="ui-badge"
+          [class.ui-badge--success]="zeroBounceCredits.configured && zeroBounceCredits.validKey !== false"
+          [class.ui-badge--pending]="!zeroBounceCredits.configured || zeroBounceCredits.validKey === false"
+        >
+          {{ zeroBounceCredits.configured ? (zeroBounceCredits.credits === null ? 'Configured' : ((zeroBounceCredits.credits | number) + ' credits')) : 'Needs API key' }}
+        </span>
+      </div>
+
+      <div class="ui-card__body">
+        <div class="verification-zerobounce__controls">
+          <label class="ui-field">
+            <span class="ui-label">Segment</span>
+            <select class="ui-select" [(ngModel)]="zeroBounceSegment" (change)="zeroBouncePreview = null; zeroBounceRunResult = null">
+              <option value="smtp_failed_internal">SMTP failed internally</option>
+              <option value="typo_resolved">Resolved typo recovery</option>
+              <option value="external_review">External review queue</option>
+            </select>
+          </label>
+
+          <label class="ui-field">
+            <span class="ui-label">Rows</span>
+            <input class="ui-input" type="number" min="1" max="100" [(ngModel)]="zeroBounceLimit" />
+          </label>
+
+          <div class="verification-zerobounce__actions">
+            <button class="ui-button" type="button" (click)="refreshZeroBounceCredits()" [disabled]="zeroBounceLoading !== ''">
+              <span class="ui-spinner ui-spinner--button" *ngIf="zeroBounceLoading === 'credits'" aria-hidden="true"></span>
+              Credits
+            </button>
+            <button class="ui-button" type="button" (click)="previewZeroBounceSegment()" [disabled]="zeroBounceLoading !== ''">
+              <span class="ui-spinner ui-spinner--button" *ngIf="zeroBounceLoading === 'preview'" aria-hidden="true"></span>
+              Preview
+            </button>
+            <button
+              class="ui-button ui-button--primary"
+              type="button"
+              (click)="runZeroBounceValidation()"
+              [disabled]="zeroBounceLoading !== '' || !zeroBouncePreview?.rows?.length || !zeroBounceCredits.configured || zeroBounceCredits.validKey === false"
+            >
+              <span class="ui-spinner ui-spinner--button" *ngIf="zeroBounceLoading === 'run'" aria-hidden="true"></span>
+              Validate with ZeroBounce
+            </button>
+          </div>
+        </div>
+
+        <div class="verification-zerobounce__summary" *ngIf="zeroBouncePreview">
+          <div>
+            <span>Segment</span>
+            <strong>{{ getZeroBounceSegmentLabel(zeroBouncePreview.segment) }}</strong>
+          </div>
+          <div>
+            <span>Total queue</span>
+            <strong>{{ zeroBouncePreview.total | number }}</strong>
+          </div>
+          <div>
+            <span>Batch</span>
+            <strong>{{ zeroBouncePreview.rows.length | number }}</strong>
+          </div>
+          <div>
+            <span>Credits</span>
+            <strong>{{ zeroBouncePreview.credits === null ? '-' : (zeroBouncePreview.credits | number) }}</strong>
+          </div>
+        </div>
+
+        <div class="verification-zerobounce__preview" *ngIf="zeroBouncePreview?.rows?.length">
+          <div class="verification-zerobounce__row verification-zerobounce__row--head">
+            <span>Email</span>
+            <span>Status</span>
+            <span>Reason</span>
+            <span>Source</span>
+          </div>
+          <div class="verification-zerobounce__row" *ngFor="let row of zeroBouncePreview?.rows?.slice(0, 8)">
+            <strong>{{ row.email }}</strong>
+            <span>{{ formatMapLabel(row.verificationStatus) }} · {{ formatMapLabel(row.sendEligibility) }}</span>
+            <span>{{ row.doNotSendReason || '-' }}</span>
+            <span>{{ row.source || row.lastValidationSource || '-' }}</span>
+          </div>
+        </div>
+
+        <div class="verification-breakdown verification-zerobounce__breakdown" *ngIf="getZeroBounceStatusRows().length">
+          <div *ngFor="let row of getZeroBounceStatusRows()">
+            <span>{{ formatMapLabel(row.key) }}</span>
+            <strong>{{ row.count | number }}</strong>
+          </div>
+        </div>
+      </div>
+    </article>
+
     <article class="ui-card verification-recovery-export">
       <div class="ui-card__header">
         <div>

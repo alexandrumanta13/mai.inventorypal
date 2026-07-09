@@ -22,6 +22,7 @@ import { ValidationIntakeGateService } from '../services/validation-intake-gate.
 import { BounceRecoveryService } from '../services/bounce-recovery.service';
 import { ElasticEmailIngestionService } from '../services/elastic-email-ingestion.service';
 import { ExternalValidationImportService } from '../services/external-validation-import.service';
+import { ZeroBounceSegment, ZeroBounceValidationService } from '../services/zerobounce-validation.service';
 import { BounceRecoveryStatus } from '../entities/bounce-recovery-candidate.entity';
 import { EmailValidationSourceSegment, ExternalValidationProvider } from '@shared/enums/email-validation.enum';
 import { VerificationStatus } from '@shared/enums/verification-status.enum';
@@ -56,6 +57,7 @@ export class VerificationController {
     private readonly bounceRecoveryService: BounceRecoveryService,
     private readonly elasticEmailIngestionService: ElasticEmailIngestionService,
     private readonly externalValidationImportService: ExternalValidationImportService,
+    private readonly zeroBounceValidationService: ZeroBounceValidationService,
   ) {}
 
   @Get('intake-overview')
@@ -225,6 +227,44 @@ export class VerificationController {
         sourceSegment: sourceSegment || EmailValidationSourceSegment.UNKNOWN,
         batchName,
         dryRun: false,
+      }),
+    };
+  }
+
+  @Get('zerobounce/credits')
+  async getZeroBounceCredits() {
+    return {
+      success: true,
+      result: await this.zeroBounceValidationService.getCreditBalance(),
+    };
+  }
+
+  @Get('zerobounce/segments/preview')
+  async previewZeroBounceSegment(
+    @Query('segment') segment?: ZeroBounceSegment,
+    @Query('limit') limit?: number,
+  ) {
+    return {
+      success: true,
+      result: await this.zeroBounceValidationService.previewSegment({
+        segment,
+        limit,
+      }),
+    };
+  }
+
+  @Post('zerobounce/validate')
+  async validateZeroBounceSegment(
+    @Body('segment') segment?: ZeroBounceSegment,
+    @Body('limit') limit?: number,
+    @Body('dryRun') dryRun?: boolean,
+  ) {
+    return {
+      success: true,
+      result: await this.zeroBounceValidationService.validateSegment({
+        segment,
+        limit,
+        dryRun,
       }),
     };
   }

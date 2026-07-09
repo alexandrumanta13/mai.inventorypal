@@ -22,6 +22,15 @@ export interface ExternalValidationImportOptions {
   batchName?: string;
 }
 
+export interface ExternalValidationRowsImportOptions {
+  provider?: ExternalValidationProvider;
+  rows: ExternalValidationInputRow[];
+  dryRun?: boolean;
+  sourceSegment?: EmailValidationSourceSegment;
+  batchName?: string;
+  metadata?: Record<string, any>;
+}
+
 export interface ExternalValidationImportResult {
   dryRun: boolean;
   provider: ExternalValidationProvider;
@@ -41,6 +50,14 @@ export interface ExternalValidationImportResult {
     sendEligibility: SendEligibility;
     reasonCode: string | null;
   }>;
+}
+
+export interface ExternalValidationInputRow {
+  email: string;
+  emailId?: number | null;
+  providerStatus: string;
+  providerSubStatus?: string | null;
+  raw?: Record<string, any>;
 }
 
 interface NormalizedExternalValidationRow {
@@ -63,9 +80,24 @@ export class ExternalValidationImportService {
   ) {}
 
   async importCsv(options: ExternalValidationImportOptions): Promise<ExternalValidationImportResult> {
+    return this.importRows({
+      provider: options.provider,
+      rows: this.normalizeCsvRows(options.csv),
+      dryRun: options.dryRun,
+      sourceSegment: options.sourceSegment,
+      batchName: options.batchName,
+      metadata: {
+        source: 'external_validation_csv',
+      },
+    });
+  }
+
+  async importRows(options: ExternalValidationRowsImportOptions): Promise<ExternalValidationImportResult> {
     const provider = this.normalizeProvider(options.provider);
     const dryRun = options.dryRun === true;
-    const rows = this.normalizeCsvRows(options.csv);
+    const rows = options.rows
+      .map((row) => this.normalizeInputRow(row))
+      .filter((row): row is NormalizedExternalValidationRow => !!row);
     const result: ExternalValidationImportResult = {
       dryRun,
       provider,
@@ -90,7 +122,7 @@ export class ExternalValidationImportService {
             submittedAt: new Date(),
             completedAt: new Date(),
             metadata: {
-              source: 'external_validation_csv',
+              ...(options.metadata || {}),
             },
           }),
         );
@@ -112,6 +144,21 @@ export class ExternalValidationImportService {
     }
 
     return result;
+  }
+
+  private normalizeInputRow(row: ExternalValidationInputRow): NormalizedExternalValidationRow | null {
+    const email = this.normalizeEmail(row.email);
+    if (!email) {
+      return null;
+    }
+
+    return {
+      email,
+      emailId: Number(row.emailId || 0) || null,
+      providerStatus: String(row.providerStatus || 'unknown').trim() || 'unknown',
+      providerSubStatus: row.providerSubStatus ? String(row.providerSubStatus).trim() : null,
+      raw: row.raw || {},
+    };
   }
 
   private async processRow(

@@ -12,6 +12,7 @@ import { ValidationIntakeGateService } from './services/validation-intake-gate.s
 import { BounceRecoveryService } from './services/bounce-recovery.service';
 import { ElasticEmailIngestionService } from './services/elastic-email-ingestion.service';
 import { ExternalValidationImportService } from './services/external-validation-import.service';
+import { ZeroBounceValidationService } from './services/zerobounce-validation.service';
 import { SyntaxValidator } from './validators/syntax.validator';
 import { DnsValidator } from './validators/dns.validator';
 import { SmtpValidator } from './validators/smtp.validator';
@@ -69,6 +70,7 @@ const verificationWorkerProviders = shouldRunWorkers()
     BounceRecoveryService,
     ElasticEmailIngestionService,
     ExternalValidationImportService,
+    ZeroBounceValidationService,
 
     // Processors
     ...verificationWorkerProviders,
@@ -79,6 +81,7 @@ const verificationWorkerProviders = shouldRunWorkers()
     BounceRecoveryService,
     ElasticEmailIngestionService,
     ExternalValidationImportService,
+    ZeroBounceValidationService,
   ],
 })
 export class EmailVerificationModule {}
