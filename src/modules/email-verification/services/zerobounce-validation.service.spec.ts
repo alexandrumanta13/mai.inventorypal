@@ -127,6 +127,34 @@ describe('ZeroBounceValidationService', () => {
       }),
     );
   });
+
+  it('accepts ZeroBounce successful batch responses with an empty errors array', async () => {
+    const response = new Response(JSON.stringify({
+      email_batch: [
+        {
+          address: 'client@gmail.com',
+          status: 'valid',
+          sub_status: '',
+        },
+      ],
+      errors: [],
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+
+    await expect((service as any).readZeroBounceResponse('validatebatch', response))
+      .resolves
+      .toMatchObject({
+        email_batch: [
+          {
+            address: 'client@gmail.com',
+            status: 'valid',
+          },
+        ],
+        errors: [],
+      });
+  });
 });
 
 function createQueryBuilderMock(options: { count: number; rows: any[] }) {

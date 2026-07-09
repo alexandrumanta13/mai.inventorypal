@@ -437,8 +437,14 @@ export class ZeroBounceValidationService {
       );
     }
 
-    if (payload?.error || payload?.errors) {
-      throw new BadRequestException(payload.error || payload.errors);
+    const errors = Array.isArray(payload?.errors)
+      ? payload.errors
+      : payload?.errors
+        ? [payload.errors]
+        : [];
+
+    if (payload?.error || errors.length > 0) {
+      throw new BadRequestException(payload.error || errors);
     }
 
     return payload;
