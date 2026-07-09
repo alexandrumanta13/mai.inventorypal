@@ -17,6 +17,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In } from 'typeorm';
 import { Email } from '@modules/emails/entities/email.entity';
 import { VerificationHistory } from '../entities/verification-history.entity';
+import { EmailValidationBatch } from '../entities/email-validation-batch.entity';
 import { EmailVerifierService } from '../services/email-verifier.service';
 import { ValidationIntakeGateService } from '../services/validation-intake-gate.service';
 import { BounceRecoveryService } from '../services/bounce-recovery.service';
@@ -52,6 +53,8 @@ export class VerificationController {
     private readonly emailRepository: Repository<Email>,
     @InjectRepository(VerificationHistory)
     private readonly verificationHistoryRepository: Repository<VerificationHistory>,
+    @InjectRepository(EmailValidationBatch)
+    private readonly emailValidationBatchRepository: Repository<EmailValidationBatch>,
     private readonly emailVerifierService: EmailVerifierService,
     private readonly validationIntakeGateService: ValidationIntakeGateService,
     private readonly bounceRecoveryService: BounceRecoveryService,
@@ -239,6 +242,25 @@ export class VerificationController {
     };
   }
 
+  @Get('external-validation-batches')
+  async listExternalValidationBatches(
+    @Query('provider') provider?: ExternalValidationProvider,
+    @Query('limit') limit?: number,
+  ) {
+    const take = Math.min(Math.max(Number(limit) || 5, 1), 25);
+    const where = provider ? { provider } : {};
+    const batches = await this.emailValidationBatchRepository.find({
+      where,
+      order: { id: 'DESC' },
+      take,
+    });
+
+    return {
+      success: true,
+      result: batches.map((batch) => this.mapExternalValidationBatch(batch)),
+    };
+  }
+
   @Get('zerobounce/segments/preview')
   async previewZeroBounceSegment(
     @Query('segment') segment?: ZeroBounceSegment,
@@ -313,6 +335,68 @@ export class VerificationController {
       success: true,
       overview: await this.elasticEmailIngestionService.getSuppressionOverview(),
     };
+  }
+
+  private mapExternalValidationBatch(batch: EmailValidationBatch) {
+    const metadata = this.safeMetadata(batch.metadata);
+    const submittedRows = Array.isArray(metadata?.submittedRows)
+      ? metadata.submittedRows
+      : [];
+    const providerResponse = metadata?.providerResponse || null;
+
+    return {
+      id: Number(batch.id),
+      provider: batch.provider,
+      status: batch.status,
+      sourceSegment: batch.sourceSegment,
+      name: batch.name,
+      totalRecords: batch.totalRecords,
+      submittedRecords: batch.submittedRecords,
+      processedRecords: batch.processedRecords,
+      validCount: batch.validCount,
+      invalidCount: batch.invalidCount,
+      riskyCount: batch.riskyCount,
+      unknownCount: batch.unknownCount,
+      errorMessage: batch.errorMessage,
+      submittedAt: batch.submittedAt,
+      completedAt: batch.completedAt,
+      createdAt: batch.createdAt,
+      updatedAt: batch.updatedAt,
+      submittedRows,
+      providerResponseSummary: metadata?.providerResponseSummary || null,
+      providerResponseRows: Array.isArray(providerResponse?.email_batch)
+        ? providerResponse.email_batch
+        : [],
+      providerErrors: Array.isArray(providerResponse?.errors)
+        ? providerResponse.errors
+        : [],
+      request: metadata?.request || null,
+      metadata: {
+        source: metadata?.source || null,
+        segment: metadata?.segment || null,
+        creditsBefore: metadata?.creditsBefore ?? null,
+        submitted: metadata?.submitted ?? submittedRows.length,
+        providerResponseReceivedAt: metadata?.providerResponseReceivedAt || null,
+        failedAt: metadata?.failedAt || null,
+        error: metadata?.error || null,
+      },
+    };
+  }
+
+  private safeMetadata(metadata: any): Record<string, any> {
+    if (!metadata) {
+      return {};
+    }
+
+    if (typeof metadata === 'object') {
+      return metadata;
+    }
+
+    try {
+      return JSON.parse(metadata);
+    } catch {
+      return {};
+    }
   }
 
   /**

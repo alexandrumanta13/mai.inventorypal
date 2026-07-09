@@ -171,6 +171,56 @@ interface SuppressionOverview {
   gmailByCategory: Record<string, number>;
 }
 
+interface ExternalValidationBatchAudit {
+  id: number;
+  provider: string;
+  status: string;
+  sourceSegment: string;
+  name: string | null;
+  totalRecords: number;
+  submittedRecords: number;
+  processedRecords: number;
+  validCount: number;
+  invalidCount: number;
+  riskyCount: number;
+  unknownCount: number;
+  errorMessage: string | null;
+  submittedAt: string | null;
+  completedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  submittedRows: Array<{
+    id?: number;
+    email: string;
+    source?: string | null;
+    verificationStatus?: string;
+    sendEligibility?: string;
+    doNotSendReason?: string | null;
+  }>;
+  providerResponseSummary: {
+    rows?: number;
+    errors?: number;
+    byStatus?: Record<string, number>;
+  } | null;
+  providerResponseRows: Array<{
+    address?: string;
+    email_address?: string;
+    email?: string;
+    status?: string;
+    sub_status?: string;
+  }>;
+  providerErrors: any[];
+  metadata: {
+    source?: string | null;
+    segment?: string | null;
+    creditsBefore?: number | null;
+    submitted?: number;
+    providerResponseReceivedAt?: string | null;
+    failedAt?: string | null;
+    error?: string | null;
+  };
+}
+
 interface MapRow {
   key: string;
   count: number;
@@ -231,6 +281,7 @@ export class VerificationComponent implements OnInit {
   zeroBouncePreview: ZeroBouncePreview | null = null;
   zeroBounceRunResult: ZeroBounceRunResult | null = null;
   zeroBounceLoading = '';
+  externalBatchAudit: ExternalValidationBatchAudit[] = [];
   validationLimit = 1000;
   skipSmtp = false;
   suppressionOverview: SuppressionOverview = this.createEmptySuppressionOverview();
@@ -272,6 +323,11 @@ export class VerificationComponent implements OnInit {
       zeroBounceCredits: this.http.get<any>('/api/verification/zerobounce/credits').pipe(
         catchError(() => of({ result: this.zeroBounceCredits })),
       ),
+      externalBatchAudit: this.http.get<any>('/api/verification/external-validation-batches', {
+        params: { limit: '5' },
+      }).pipe(
+        catchError(() => of({ result: [] })),
+      ),
     }).subscribe({
       next: (response) => {
         this.overview = response.overview.overview || this.createEmptyOverview();
@@ -282,6 +338,7 @@ export class VerificationComponent implements OnInit {
         this.bounceCandidates = response.bounceList.result?.items || [];
         this.setSuppressionOverview(response.suppression.overview || this.createEmptySuppressionOverview());
         this.zeroBounceCredits = response.zeroBounceCredits.result || this.zeroBounceCredits;
+        this.externalBatchAudit = response.externalBatchAudit.result || [];
         this.lastUpdated = new Date();
         this.loading = false;
       },
@@ -763,6 +820,14 @@ export class VerificationComponent implements OnInit {
 
   getZeroBounceStatusRows(): Array<{ key: string; count: number }> {
     return this.toMapRows(this.zeroBounceRunResult?.importResult?.byMappedStatus || {}, 8);
+  }
+
+  getBatchStatusRows(batch: ExternalValidationBatchAudit): Array<{ key: string; count: number }> {
+    return this.toMapRows(batch.providerResponseSummary?.byStatus || {}, 6);
+  }
+
+  getBatchProviderEmail(row: ExternalValidationBatchAudit['providerResponseRows'][number]): string {
+    return row.address || row.email_address || row.email || '-';
   }
 
   getElasticDoNotSendShare(): number {

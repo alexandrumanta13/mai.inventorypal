@@ -543,6 +543,89 @@
             <strong>{{ row.count | number }}</strong>
           </div>
         </div>
+
+        <div class="verification-batch-audit" *ngIf="externalBatchAudit.length > 0">
+          <div class="verification-batch-audit__header">
+            <h3>External validation audit</h3>
+            <button class="ui-button ui-button--sm" type="button" (click)="loadValidation()" [disabled]="loading || zeroBounceLoading !== ''">
+              Refresh audit
+            </button>
+          </div>
+
+          <div class="verification-batch-audit__item" *ngFor="let batch of externalBatchAudit">
+            <div class="verification-batch-audit__title">
+              <div>
+                <strong>#{{ batch.id }} {{ formatMapLabel(batch.provider) }}</strong>
+                <small>{{ formatMapLabel(batch.sourceSegment) }} · {{ batch.createdAt | date:'short' }}</small>
+              </div>
+              <span
+                class="ui-badge"
+                [ngClass]="batch.status === 'completed' ? 'ui-badge--success' : batch.status === 'failed' ? 'ui-badge--danger' : 'ui-badge--pending'"
+              >
+                {{ formatMapLabel(batch.status) }}
+              </span>
+            </div>
+
+            <div class="verification-batch-audit__metrics">
+              <div>
+                <span>Submitted</span>
+                <strong>{{ batch.submittedRecords | number }}</strong>
+              </div>
+              <div>
+                <span>Processed</span>
+                <strong>{{ batch.processedRecords | number }}</strong>
+              </div>
+              <div>
+                <span>Valid</span>
+                <strong>{{ batch.validCount | number }}</strong>
+              </div>
+              <div>
+                <span>Invalid</span>
+                <strong>{{ batch.invalidCount | number }}</strong>
+              </div>
+              <div>
+                <span>Credits before</span>
+                <strong>{{ batch.metadata.creditsBefore === null || batch.metadata.creditsBefore === undefined ? '-' : (batch.metadata.creditsBefore | number) }}</strong>
+              </div>
+            </div>
+
+            <div class="verification-batch-audit__status" *ngIf="getBatchStatusRows(batch).length">
+              <span *ngFor="let row of getBatchStatusRows(batch)">
+                {{ formatMapLabel(row.key) }} {{ row.count | number }}
+              </span>
+            </div>
+
+            <div class="verification-batch-audit__error" *ngIf="batch.errorMessage || batch.metadata.error">
+              {{ batch.errorMessage || batch.metadata.error }}
+            </div>
+
+            <div class="verification-batch-audit__tables">
+              <section>
+                <h4>Submitted rows</h4>
+                <div class="verification-batch-audit__row verification-batch-audit__row--head">
+                  <span>Email</span>
+                  <span>Source</span>
+                </div>
+                <div class="verification-batch-audit__row" *ngFor="let row of batch.submittedRows.slice(0, 10)">
+                  <strong>{{ row.email }}</strong>
+                  <span>{{ row.source || row.sendEligibility || '-' }}</span>
+                </div>
+              </section>
+
+              <section *ngIf="batch.providerResponseRows.length > 0">
+                <h4>Provider response</h4>
+                <div class="verification-batch-audit__row verification-batch-audit__row--head">
+                  <span>Email</span>
+                  <span>Status</span>
+                </div>
+                <div class="verification-batch-audit__row" *ngFor="let row of batch.providerResponseRows.slice(0, 10)">
+                  <strong>{{ getBatchProviderEmail(row) }}</strong>
+                  <span>{{ formatMapLabel(row.status || 'unknown') }}<ng-container *ngIf="row.sub_status"> · {{ formatMapLabel(row.sub_status) }}</ng-container></span>
+                </div>
+              </section>
+            </div>
+          </div>
+        </div>
       </div>
     </article>
 
