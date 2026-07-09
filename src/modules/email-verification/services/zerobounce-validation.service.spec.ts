@@ -1,5 +1,10 @@
 import { ZeroBounceValidationService } from './zerobounce-validation.service';
 import { ExternalValidationImportService } from './external-validation-import.service';
+import {
+  EmailValidationMappedStatus,
+  ExternalValidationProvider,
+  SendEligibility,
+} from '@shared/enums/email-validation.enum';
 
 describe('ZeroBounceValidationService', () => {
   let configService: {
@@ -7,6 +12,12 @@ describe('ZeroBounceValidationService', () => {
   };
   let emailRepository: {
     createQueryBuilder: jest.Mock;
+    findOne: jest.Mock;
+    update: jest.Mock;
+  };
+  let eventRepository: {
+    create: jest.Mock;
+    save: jest.Mock;
   };
   let externalValidationImportService: {
     importRows: jest.Mock;
@@ -19,6 +30,12 @@ describe('ZeroBounceValidationService', () => {
     };
     emailRepository = {
       createQueryBuilder: jest.fn(),
+      findOne: jest.fn(),
+      update: jest.fn().mockResolvedValue({ affected: 1 }),
+    };
+    eventRepository = {
+      create: jest.fn((row) => row),
+      save: jest.fn().mockResolvedValue({ id: 91 }),
     };
     externalValidationImportService = {
       importRows: jest.fn(),
@@ -26,6 +43,7 @@ describe('ZeroBounceValidationService', () => {
     service = new ZeroBounceValidationService(
       configService as any,
       emailRepository as any,
+      eventRepository as any,
       externalValidationImportService as unknown as ExternalValidationImportService,
     );
   });
@@ -67,6 +85,47 @@ describe('ZeroBounceValidationService', () => {
     expect(result.total).toBe(1250);
     expect(result.rows).toHaveLength(100);
     expect(result.estimatedCredits).toBe(100);
+  });
+
+  it('excludes a candidate from external validation with an audit event', async () => {
+    emailRepository.findOne.mockResolvedValueOnce({
+      id: 456,
+      email: 'roxana.neacsu@sorantis.ro',
+      verificationStatus: 'invalid',
+      sendEligibility: 'do_not_send',
+      doNotSendReason: 'invalid',
+      lastValidationSource: null,
+      qualityScore: 20,
+    });
+
+    const result = await service.excludeFromExternalValidation({
+      emailId: 456,
+      note: 'Manual decision from ZeroBounce preview',
+    });
+
+    expect(result).toEqual({
+      excluded: true,
+      emailId: 456,
+      email: 'roxana.neacsu@sorantis.ro',
+      reasonCode: 'external_validation_excluded',
+    });
+    expect(eventRepository.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: ExternalValidationProvider.MANUAL,
+        emailId: 456,
+        mappedStatus: EmailValidationMappedStatus.DO_NOT_MAIL,
+        sendEligibility: SendEligibility.DO_NOT_SEND,
+        reasonCode: 'external_validation_excluded',
+      }),
+    );
+    expect(emailRepository.update).toHaveBeenCalledWith(
+      456,
+      expect.objectContaining({
+        sendEligibility: SendEligibility.DO_NOT_SEND,
+        doNotSendReason: 'external_validation_excluded',
+        lastValidationSource: ExternalValidationProvider.MANUAL,
+      }),
+    );
   });
 });
 

@@ -518,12 +518,22 @@
             <span>Status</span>
             <span>Reason</span>
             <span>Source</span>
+            <span>Action</span>
           </div>
           <div class="verification-zerobounce__row" *ngFor="let row of zeroBouncePreview?.rows?.slice(0, 8)">
             <strong>{{ row.email }}</strong>
             <span>{{ formatMapLabel(row.verificationStatus) }} · {{ formatMapLabel(row.sendEligibility) }}</span>
             <span>{{ row.doNotSendReason || '-' }}</span>
             <span>{{ row.source || row.lastValidationSource || '-' }}</span>
+            <button
+              class="ui-button ui-button--sm"
+              type="button"
+              (click)="excludeZeroBounceRow(row)"
+              [disabled]="zeroBounceLoading !== ''"
+            >
+              <span class="ui-spinner ui-spinner--button" *ngIf="zeroBounceLoading === 'exclude-' + row.id" aria-hidden="true"></span>
+              Exclude
+            </button>
           </div>
         </div>
 

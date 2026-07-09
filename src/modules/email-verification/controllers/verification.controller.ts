@@ -269,6 +269,22 @@ export class VerificationController {
     };
   }
 
+  @Post('zerobounce/exclude')
+  async excludeZeroBounceCandidate(
+    @Body('emailId') emailId?: number,
+    @Body('email') email?: string,
+    @Body('note') note?: string,
+  ) {
+    return {
+      success: true,
+      result: await this.zeroBounceValidationService.excludeFromExternalValidation({
+        emailId,
+        email,
+        note,
+      }),
+    };
+  }
+
   @Post('elastic-email/pull')
   async pullElasticEmailEvents(
     @Body('from') from?: string,

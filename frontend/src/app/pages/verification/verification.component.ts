@@ -617,6 +617,31 @@ export class VerificationComponent implements OnInit {
     });
   }
 
+  excludeZeroBounceRow(row: ZeroBouncePreview['rows'][number]) {
+    if (!confirm(`Exclude ${row.email} from ZeroBounce validation and mark it as do-not-send?`)) {
+      return;
+    }
+
+    this.zeroBounceLoading = `exclude-${row.id}`;
+    this.actionMessage = '';
+    this.errorMessage = '';
+
+    this.http.post<any>('/api/verification/zerobounce/exclude', {
+      emailId: row.id,
+      note: 'Manual exclusion from ZeroBounce preview',
+    }).subscribe({
+      next: (response) => {
+        this.actionMessage = `Excluded ${response.result?.email || row.email} from ZeroBounce validation.`;
+        this.zeroBounceLoading = '';
+        this.previewZeroBounceSegment();
+      },
+      error: (error) => {
+        this.errorMessage = error?.error?.message || `Could not exclude ${row.email}.`;
+        this.zeroBounceLoading = '';
+      },
+    });
+  }
+
   downloadDomainBatch(domain: string) {
     const params = new URLSearchParams({
       segment: 'domain',

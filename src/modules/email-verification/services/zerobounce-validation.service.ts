@@ -1,14 +1,22 @@
-import { BadRequestException, Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  InternalServerErrorException,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, SelectQueryBuilder } from 'typeorm';
 import { Email } from '@modules/emails/entities/email.entity';
 import {
+  EmailValidationMappedStatus,
   EmailValidationSourceSegment,
   ExternalValidationProvider,
   SendEligibility,
 } from '@shared/enums/email-validation.enum';
 import { VerificationStatus } from '@shared/enums/verification-status.enum';
+import { EmailValidationEvent } from '../entities/email-validation-event.entity';
 import {
   ExternalValidationImportResult,
   ExternalValidationImportService,
@@ -54,6 +62,13 @@ export interface ZeroBounceRunResult {
   importResult: ExternalValidationImportResult | null;
 }
 
+export interface ZeroBounceExcludeResult {
+  excluded: boolean;
+  emailId: number;
+  email: string;
+  reasonCode: string;
+}
+
 @Injectable()
 export class ZeroBounceValidationService {
   private readonly logger = new Logger(ZeroBounceValidationService.name);
@@ -63,6 +78,8 @@ export class ZeroBounceValidationService {
     private readonly configService: ConfigService,
     @InjectRepository(Email)
     private readonly emailRepository: Repository<Email>,
+    @InjectRepository(EmailValidationEvent)
+    private readonly eventRepository: Repository<EmailValidationEvent>,
     private readonly externalValidationImportService: ExternalValidationImportService,
   ) {}
 
@@ -211,6 +228,59 @@ export class ZeroBounceValidationService {
     };
   }
 
+  async excludeFromExternalValidation(options: {
+    emailId?: number;
+    email?: string;
+    note?: string;
+  }): Promise<ZeroBounceExcludeResult> {
+    const emailRecord = await this.findEmailForExclusion(options);
+    const now = new Date();
+    const reasonCode = 'external_validation_excluded';
+
+    await this.eventRepository.save(
+      this.eventRepository.create({
+        batchId: null,
+        emailId: Number(emailRecord.id),
+        provider: ExternalValidationProvider.MANUAL,
+        inputEmail: emailRecord.email,
+        normalizedEmail: emailRecord.email,
+        providerStatus: 'manual_excluded',
+        providerSubStatus: 'zerobounce_queue',
+        mappedStatus: EmailValidationMappedStatus.DO_NOT_MAIL,
+        sendEligibility: SendEligibility.DO_NOT_SEND,
+        reasonCode,
+        confidenceScore: Number(emailRecord.qualityScore || 0),
+        rawResponse: {
+          source: 'zerobounce_preview',
+          note: options.note || null,
+          previous: {
+            verificationStatus: emailRecord.verificationStatus,
+            sendEligibility: emailRecord.sendEligibility,
+            doNotSendReason: emailRecord.doNotSendReason,
+            lastValidationSource: emailRecord.lastValidationSource,
+          },
+        },
+        validatedAt: now,
+      }),
+    );
+
+    await this.emailRepository.update(emailRecord.id, {
+      sendEligibility: SendEligibility.DO_NOT_SEND,
+      doNotSendReason: reasonCode,
+      lastValidationSource: ExternalValidationProvider.MANUAL,
+      lastValidationAt: now,
+      lastVerifiedAt: now,
+      smtpErrorMessage: 'Manually excluded from ZeroBounce validation queue',
+    });
+
+    return {
+      excluded: true,
+      emailId: Number(emailRecord.id),
+      email: emailRecord.email,
+      reasonCode,
+    };
+  }
+
   private buildSegmentQuery(segment: ZeroBounceSegment): SelectQueryBuilder<Email> {
     const query = this.emailRepository
       .createQueryBuilder('email')
@@ -288,6 +358,28 @@ export class ZeroBounceValidationService {
     }
 
     return 'smtp_failed_internal';
+  }
+
+  private async findEmailForExclusion(options: {
+    emailId?: number;
+    email?: string;
+  }): Promise<Email> {
+    const emailId = Number(options.emailId || 0) || null;
+    const email = String(options.email || '').trim().toLowerCase();
+
+    if (!emailId && !email) {
+      throw new BadRequestException('emailId or email is required');
+    }
+
+    const emailRecord = emailId
+      ? await this.emailRepository.findOne({ where: { id: emailId } })
+      : await this.emailRepository.findOne({ where: { email } });
+
+    if (!emailRecord) {
+      throw new NotFoundException('Email row not found');
+    }
+
+    return emailRecord;
   }
 
   private normalizeLimit(limit?: number): number {
