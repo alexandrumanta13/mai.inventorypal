@@ -93,9 +93,95 @@ describe('ZeroBounceValidationService', () => {
     });
 
     expect(query.take).toHaveBeenCalledWith(100);
+    expect(query.skip).toHaveBeenCalledWith(0);
     expect(result.total).toBe(1250);
     expect(result.rows).toHaveLength(100);
     expect(result.estimatedCredits).toBe(100);
+  });
+
+  it('paginates and searches the queue without changing the segment rules', async () => {
+    const query = createQueryBuilderMock({
+      count: 1,
+      rows: [{
+        id: 88,
+        email: 'maria@gmial.com',
+        typoResolvedEmail: 'maria@gmail.com',
+        verificationStatus: 'risky',
+        sendEligibility: 'review',
+        doNotSendReason: 'typo_accepted_external_validation_required',
+        lastValidationSource: 'manual',
+        lastValidationAt: null,
+        acquisitionSource: 'supplikit',
+      }],
+    });
+    emailRepository.createQueryBuilder.mockReturnValue(query);
+    configService.get.mockReturnValue(undefined);
+
+    const result = await service.previewSegment({
+      segment: 'typo_resolved',
+      limit: 25,
+      offset: 50,
+      search: 'maria',
+      includeCredits: false,
+    });
+
+    expect(query.andWhere).toHaveBeenCalledWith(
+      expect.stringContaining('email.typoResolvedEmail LIKE :queueSearch'),
+      { queueSearch: '%maria%' },
+    );
+    expect(query.skip).toHaveBeenCalledWith(50);
+    expect(query.take).toHaveBeenCalledWith(25);
+    expect(result).toMatchObject({ offset: 50, search: 'maria', total: 1 });
+  });
+
+  it('filters a validation preview to the explicitly selected email ids', async () => {
+    const query = createQueryBuilderMock({
+      count: 2,
+      rows: [
+        {
+          id: 12,
+          email: 'one@gmial.com',
+          typoResolvedEmail: 'one@gmail.com',
+          verificationStatus: 'risky',
+          sendEligibility: 'review',
+          doNotSendReason: 'typo_accepted_external_validation_required',
+          acquisitionSource: 'supplikit',
+        },
+        {
+          id: 19,
+          email: 'two@gmial.com',
+          typoResolvedEmail: 'two@gmail.com',
+          verificationStatus: 'risky',
+          sendEligibility: 'review',
+          doNotSendReason: 'typo_accepted_external_validation_required',
+          acquisitionSource: 'supplikit',
+        },
+      ],
+    });
+    emailRepository.createQueryBuilder.mockReturnValue(query);
+    configService.get.mockReturnValue(undefined);
+
+    await service.previewSegment({
+      segment: 'typo_resolved',
+      emailIds: [19, 12, 19],
+      limit: 2,
+      includeCredits: false,
+    });
+
+    expect(query.andWhere).toHaveBeenCalledWith(
+      'email.id IN (:...selectedEmailIds)',
+      { selectedEmailIds: [19, 12] },
+    );
+  });
+
+  it('refuses to run ZeroBounce without an explicit selection', async () => {
+    await expect(service.validateSegment({
+      segment: 'typo_resolved',
+      emailIds: [],
+      dryRun: false,
+    })).rejects.toThrow('Select at least one email');
+
+    expect(emailRepository.createQueryBuilder).not.toHaveBeenCalled();
   });
 
   it('does not preview emails that already have a ZeroBounce audit event', async () => {
@@ -228,6 +314,7 @@ function createQueryBuilderMock(options: { count: number; rows: any[] }) {
     orderBy: jest.fn(),
     addOrderBy: jest.fn(),
     select: jest.fn(),
+    skip: jest.fn(),
     take: jest.fn(),
     getMany: jest.fn().mockResolvedValue(options.rows),
     getCount: jest.fn().mockResolvedValue(options.count),

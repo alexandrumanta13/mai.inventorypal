@@ -41,6 +41,8 @@ export interface ZeroBouncePreviewResult {
   validKey: boolean | null;
   segment: ZeroBounceSegment;
   limit: number;
+  offset: number;
+  search: string;
   total: number;
   rows: Array<{
     id: number;
@@ -111,11 +113,38 @@ export class ZeroBounceValidationService {
   async previewSegment(options: {
     segment?: ZeroBounceSegment;
     limit?: number;
+    offset?: number;
+    search?: string;
+    emailIds?: number[];
     includeCredits?: boolean;
   }): Promise<ZeroBouncePreviewResult> {
     const segment = this.normalizeSegment(options.segment);
     const limit = this.normalizeLimit(options.limit);
+    const offset = this.normalizeOffset(options.offset);
+    const search = this.normalizeSearch(options.search);
+    const emailIds = options.emailIds === undefined
+      ? null
+      : this.normalizeEmailIds(options.emailIds);
     const query = this.buildSegmentQuery(segment);
+
+    if (search) {
+      query.andWhere(
+        `(
+          email.email LIKE :queueSearch
+          OR email.typoResolvedEmail LIKE :queueSearch
+          OR email.typoSuggestion LIKE :queueSearch
+          OR email.acquisitionSource LIKE :queueSearch
+        )`,
+        { queueSearch: `%${search}%` },
+      );
+    }
+
+    if (emailIds !== null) {
+      query.andWhere('email.id IN (:...selectedEmailIds)', {
+        selectedEmailIds: emailIds.length ? emailIds : [-1],
+      });
+    }
+
     const total = await query.clone().getCount();
     const emails = await query
       .select([
@@ -130,6 +159,7 @@ export class ZeroBounceValidationService {
         'email.lastValidationAt',
         'email.acquisitionSource',
       ])
+      .skip(offset)
       .take(limit)
       .getMany();
     const creditBalance = options.includeCredits === false
@@ -141,6 +171,8 @@ export class ZeroBounceValidationService {
       validKey: creditBalance?.validKey ?? null,
       segment,
       limit,
+      offset,
+      search,
       total,
       rows: emails.map((email) => {
         const originalEmail = this.normalizeEmail(email.email);
@@ -167,14 +199,27 @@ export class ZeroBounceValidationService {
 
   async validateSegment(options: {
     segment?: ZeroBounceSegment;
-    limit?: number;
+    emailIds?: number[];
     dryRun?: boolean;
   }): Promise<ZeroBounceRunResult> {
+    const emailIds = this.normalizeEmailIds(options.emailIds || []);
+    if (!emailIds.length) {
+      throw new BadRequestException('Select at least one email before running ZeroBounce validation.');
+    }
+
     const preview = await this.previewSegment({
       segment: options.segment,
-      limit: options.limit,
+      emailIds,
+      limit: emailIds.length,
+      offset: 0,
       includeCredits: true,
     });
+
+    if (preview.rows.length !== emailIds.length) {
+      throw new BadRequestException(
+        'Some selected emails are no longer eligible. Reload the queue and select them again.',
+      );
+    }
 
     if (options.dryRun === true) {
       return {
@@ -601,6 +646,33 @@ export class ZeroBounceValidationService {
     }
 
     return Math.min(Math.floor(parsed), this.maxBatchSize);
+  }
+
+  private normalizeOffset(offset?: number): number {
+    const parsed = Number(offset || 0);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      return 0;
+    }
+
+    return Math.floor(parsed);
+  }
+
+  private normalizeSearch(search?: string): string {
+    return String(search || '').trim().slice(0, 200);
+  }
+
+  private normalizeEmailIds(emailIds: number[]): number[] {
+    const normalized = Array.from(new Set(
+      (Array.isArray(emailIds) ? emailIds : [])
+        .map((value) => Number(value))
+        .filter((value) => Number.isInteger(value) && value > 0),
+    ));
+
+    if (normalized.length > this.maxBatchSize) {
+      throw new BadRequestException(`A ZeroBounce batch can contain at most ${this.maxBatchSize} emails.`);
+    }
+
+    return normalized;
   }
 
   private getApiKey(): string | null {

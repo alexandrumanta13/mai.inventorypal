@@ -452,7 +452,7 @@
 
 .verification-zerobounce__controls {
   display: grid;
-  grid-template-columns: minmax(280px, 1fr) minmax(110px, 170px);
+  grid-template-columns: minmax(240px, 0.8fr) minmax(280px, 1.2fr) minmax(130px, 170px);
   align-items: end;
   gap: 0.75rem;
 }
@@ -540,13 +540,21 @@
 
 .verification-zerobounce__row {
   display: grid;
-  grid-template-columns: minmax(240px, 1.1fr) minmax(170px, 0.75fr) minmax(200px, 1fr) minmax(160px, 0.7fr) minmax(90px, auto);
+  grid-template-columns: 28px minmax(240px, 1fr) minmax(240px, 1fr) minmax(170px, 0.7fr) minmax(180px, 0.7fr) minmax(90px, auto);
   gap: 0.75rem;
   align-items: center;
-  min-width: 900px;
+  min-width: 1120px;
   min-height: 56px;
   padding: 0.7rem 0.75rem;
   border-bottom: 1px solid var(--color-border);
+}
+
+.verification-zerobounce__row input[type='checkbox'] {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--color-primary);
+  cursor: pointer;
 }
 
 .verification-recovery-export__row:last-child,
@@ -586,6 +594,37 @@
   color: var(--color-text);
   font-size: 0.84rem;
   font-weight: 900;
+}
+
+.verification-zerobounce__selection,
+.verification-zerobounce__pager {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.85rem;
+}
+
+.verification-zerobounce__selection {
+  padding: 0.7rem 0.8rem;
+  color: var(--color-text);
+  background: var(--color-primary-soft);
+  border: 1px solid var(--color-primary);
+  border-radius: var(--radius-md);
+}
+
+.verification-zerobounce__selection span,
+.verification-zerobounce__pager span {
+  color: var(--color-muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.verification-zerobounce__selection .ui-button {
+  margin-left: auto;
+}
+
+.verification-zerobounce__pager {
+  justify-content: flex-end;
 }
 
 .verification-recovery-export__row small,
@@ -905,6 +944,7 @@
   .verification-bounce__pager,
   .verification-batch-audit__header,
   .verification-zerobounce__actions,
+  .verification-zerobounce__pager,
   .verification-recovery-export__actions {
     justify-content: flex-start;
   }
@@ -943,5 +983,14 @@
 
   .verification-segmented button:last-child {
     border-bottom: 0;
+  }
+
+  .verification-zerobounce__selection {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .verification-zerobounce__selection .ui-button {
+    margin-left: 0;
   }
 }

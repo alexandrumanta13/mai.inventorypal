@@ -130,6 +130,8 @@ interface ZeroBouncePreview {
   validKey: boolean | null;
   segment: ZeroBounceSegment;
   limit: number;
+  offset: number;
+  search: string;
   total: number;
   estimatedCredits: number;
   credits: number | null;
@@ -280,8 +282,12 @@ export class VerificationComponent implements OnInit {
     credits: null,
     validKey: null,
   };
-  zeroBounceSegment: ZeroBounceSegment = 'smtp_failed_internal';
-  zeroBounceLimit = 35;
+  zeroBounceSegment: ZeroBounceSegment = 'typo_resolved';
+  zeroBouncePageSize = 25;
+  zeroBouncePage = 1;
+  zeroBounceSearch = '';
+  zeroBounceAppliedSearch = '';
+  selectedZeroBounceIds = new Set<number>();
   zeroBouncePreview: ZeroBouncePreview | null = null;
   zeroBounceRunResult: ZeroBounceRunResult | null = null;
   zeroBounceLoading = '';
@@ -667,7 +673,9 @@ export class VerificationComponent implements OnInit {
     this.http.get<any>('/api/verification/zerobounce/segments/preview', {
       params: {
         segment: this.zeroBounceSegment,
-        limit: String(this.normalizeZeroBounceLimit()),
+        limit: String(this.normalizeZeroBouncePageSize()),
+        offset: String((this.zeroBouncePage - 1) * this.normalizeZeroBouncePageSize()),
+        search: this.zeroBounceAppliedSearch,
       },
     }).subscribe({
       next: (response) => {
@@ -677,7 +685,7 @@ export class VerificationComponent implements OnInit {
           credits: this.zeroBouncePreview?.credits ?? this.zeroBounceCredits.credits,
           validKey: this.zeroBouncePreview?.validKey ?? this.zeroBounceCredits.validKey,
         };
-        this.actionMessage = `ZeroBounce preview ready: ${this.zeroBouncePreview?.rows.length || 0} emails in this batch.`;
+        this.actionMessage = `ZeroBounce queue loaded: ${this.zeroBouncePreview?.rows.length || 0} rows on this page.`;
         this.zeroBounceLoading = '';
       },
       error: () => {
@@ -688,12 +696,21 @@ export class VerificationComponent implements OnInit {
   }
 
   runZeroBounceValidation() {
-    if (!this.zeroBouncePreview) {
-      this.errorMessage = 'Preview the ZeroBounce segment before running validation.';
+    const emailIds = Array.from(this.selectedZeroBounceIds);
+    if (!emailIds.length) {
+      this.errorMessage = 'Select the emails you want to validate first.';
       return;
     }
 
-    if (!confirm(`Validate ${this.zeroBouncePreview.rows.length} emails with ZeroBounce API? This consumes ZeroBounce credits and stores an audit batch before applying results.`)) {
+    if (this.zeroBounceCredits.credits !== null && emailIds.length > this.zeroBounceCredits.credits) {
+      this.errorMessage = `The selection needs ${emailIds.length} credits, but the account has ${this.zeroBounceCredits.credits}.`;
+      return;
+    }
+
+    const balance = this.zeroBounceCredits.credits === null
+      ? 'unknown'
+      : String(this.zeroBounceCredits.credits);
+    if (!confirm(`Validate exactly ${emailIds.length} selected emails with ZeroBounce? Maximum cost: ${emailIds.length} credits. Current balance: ${balance}.`)) {
       return;
     }
 
@@ -703,14 +720,17 @@ export class VerificationComponent implements OnInit {
 
     this.http.post<any>('/api/verification/zerobounce/validate', {
       segment: this.zeroBounceSegment,
-      limit: this.normalizeZeroBounceLimit(),
+      emailIds,
       dryRun: false,
     }).subscribe({
       next: (response) => {
         this.zeroBounceRunResult = response.result || null;
         this.externalImportPreview = this.zeroBounceRunResult?.importResult || this.externalImportPreview;
-        this.actionMessage = `ZeroBounce validation applied: ${this.zeroBounceRunResult?.importResult?.updated || 0} email rows updated.`;
+        this.actionMessage = `ZeroBounce processed ${this.zeroBounceRunResult?.submitted || 0} selected emails; ${this.zeroBounceRunResult?.importResult?.updated || 0} rows were updated.`;
+        this.selectedZeroBounceIds.clear();
         this.zeroBounceLoading = '';
+        this.previewZeroBounceSegment();
+        this.externalLoaded = false;
         this.loadValidation();
       },
       error: (error) => {
@@ -735,6 +755,7 @@ export class VerificationComponent implements OnInit {
     }).subscribe({
       next: (response) => {
         this.actionMessage = `Excluded ${response.result?.email || row.email} from ZeroBounce validation.`;
+        this.selectedZeroBounceIds.delete(row.id);
         this.zeroBounceLoading = '';
         this.previewZeroBounceSegment();
       },
@@ -868,6 +889,97 @@ export class VerificationComponent implements OnInit {
     return labels[segment] || this.formatMapLabel(segment);
   }
 
+  onZeroBounceSegmentChange() {
+    this.zeroBouncePage = 1;
+    this.zeroBounceSearch = '';
+    this.zeroBounceAppliedSearch = '';
+    this.zeroBouncePreview = null;
+    this.zeroBounceRunResult = null;
+    this.selectedZeroBounceIds.clear();
+    this.previewZeroBounceSegment();
+  }
+
+  searchZeroBounceQueue() {
+    this.zeroBounceAppliedSearch = this.zeroBounceSearch.trim();
+    this.zeroBouncePage = 1;
+    this.selectedZeroBounceIds.clear();
+    this.previewZeroBounceSegment();
+  }
+
+  moveZeroBouncePage(delta: number) {
+    const totalPages = this.getZeroBounceTotalPages();
+    this.zeroBouncePage = Math.min(Math.max(this.zeroBouncePage + delta, 1), totalPages);
+    this.previewZeroBounceSegment();
+  }
+
+  toggleZeroBounceRow(emailId: number, selected: boolean) {
+    if (selected) {
+      if (this.selectedZeroBounceIds.size >= 100) {
+        this.errorMessage = 'A ZeroBounce batch can contain at most 100 emails.';
+        return;
+      }
+      this.selectedZeroBounceIds.add(emailId);
+      return;
+    }
+
+    this.selectedZeroBounceIds.delete(emailId);
+  }
+
+  toggleZeroBouncePage(selected: boolean) {
+    const rows = this.zeroBouncePreview?.rows || [];
+    if (!selected) {
+      rows.forEach((row) => this.selectedZeroBounceIds.delete(row.id));
+      return;
+    }
+
+    rows.forEach((row) => {
+      if (this.selectedZeroBounceIds.size < 100) {
+        this.selectedZeroBounceIds.add(row.id);
+      }
+    });
+  }
+
+  selectZeroBouncePilot() {
+    this.selectedZeroBounceIds.clear();
+    (this.zeroBouncePreview?.rows || []).slice(0, 5).forEach((row) => {
+      this.selectedZeroBounceIds.add(row.id);
+    });
+  }
+
+  clearZeroBounceSelection() {
+    this.selectedZeroBounceIds.clear();
+  }
+
+  isZeroBounceRowSelected(emailId: number): boolean {
+    return this.selectedZeroBounceIds.has(emailId);
+  }
+
+  isZeroBouncePageSelected(): boolean {
+    const rows = this.zeroBouncePreview?.rows || [];
+    return rows.length > 0 && rows.every((row) => this.selectedZeroBounceIds.has(row.id));
+  }
+
+  getZeroBounceSelectedCount(): number {
+    return this.selectedZeroBounceIds.size;
+  }
+
+  getZeroBounceTotalPages(): number {
+    return Math.max(Math.ceil(Number(this.zeroBouncePreview?.total || 0) / this.normalizeZeroBouncePageSize()), 1);
+  }
+
+  getZeroBouncePageLabel(): string {
+    return `Page ${this.zeroBouncePage} of ${this.getZeroBounceTotalPages()}`;
+  }
+
+  canValidateZeroBounceSelection(): boolean {
+    const selected = this.getZeroBounceSelectedCount();
+    return selected > 0
+      && selected <= 100
+      && this.zeroBounceCredits.configured
+      && this.zeroBounceCredits.validKey !== false
+      && (this.zeroBounceCredits.credits === null || selected <= this.zeroBounceCredits.credits);
+  }
+
   getZeroBounceStatusRows(): Array<{ key: string; count: number }> {
     return this.toMapRows(this.zeroBounceRunResult?.importResult?.byMappedStatus || {}, 8);
   }
@@ -931,8 +1043,8 @@ export class VerificationComponent implements OnInit {
     return `external-validation-${this.recoveryExportSegment.replace(/_/g, '-')}-batch-${String(this.recoveryExportBatch).padStart(3, '0')}.csv`;
   }
 
-  private normalizeZeroBounceLimit(): number {
-    const parsed = Number(this.zeroBounceLimit) || 35;
+  private normalizeZeroBouncePageSize(): number {
+    const parsed = Number(this.zeroBouncePageSize) || 25;
     return Math.min(Math.max(Math.floor(parsed), 1), 100);
   }
 
@@ -1096,6 +1208,9 @@ export class VerificationComponent implements OnInit {
       this.externalBatchAudit = response.externalBatchAudit.result || [];
       this.externalLoaded = true;
       this.lastUpdated = new Date();
+      if (!this.zeroBouncePreview && this.zeroBounceLoading === '') {
+        this.previewZeroBounceSegment();
+      }
     });
   }
 

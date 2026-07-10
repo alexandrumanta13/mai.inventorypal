@@ -278,12 +278,17 @@ export class VerificationController {
   async previewZeroBounceSegment(
     @Query('segment') segment?: ZeroBounceSegment,
     @Query('limit') limit?: number,
+    @Query('offset') offset?: number,
+    @Query('search') search?: string,
   ) {
     return {
       success: true,
       result: await this.zeroBounceValidationService.previewSegment({
         segment,
         limit,
+        offset,
+        search,
+        includeCredits: false,
       }),
     };
   }
@@ -291,14 +296,14 @@ export class VerificationController {
   @Post('zerobounce/validate')
   async validateZeroBounceSegment(
     @Body('segment') segment?: ZeroBounceSegment,
-    @Body('limit') limit?: number,
+    @Body('emailIds') emailIds?: number[],
     @Body('dryRun') dryRun?: boolean,
   ) {
     return {
       success: true,
       result: await this.zeroBounceValidationService.validateSegment({
         segment,
-        limit,
+        emailIds,
         dryRun,
       }),
     };

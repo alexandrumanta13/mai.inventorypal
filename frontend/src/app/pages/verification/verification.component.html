@@ -496,7 +496,7 @@
         <div class="verification-zerobounce__controls">
           <label class="ui-field">
             <span class="ui-label">Segment</span>
-            <select class="ui-select" [(ngModel)]="zeroBounceSegment" (change)="zeroBouncePreview = null; zeroBounceRunResult = null">
+            <select class="ui-select" [(ngModel)]="zeroBounceSegment" (change)="onZeroBounceSegmentChange()">
               <option value="smtp_failed_internal">Internal SMTP failed</option>
               <option value="typo_resolved">Recovered typo emails</option>
               <option value="external_review">External review queue</option>
@@ -504,8 +504,24 @@
           </label>
 
           <label class="ui-field">
-            <span class="ui-label">Rows</span>
-            <input class="ui-input" type="number" min="1" max="100" [(ngModel)]="zeroBounceLimit" />
+            <span class="ui-label">Search</span>
+            <input
+              class="ui-input"
+              type="search"
+              [(ngModel)]="zeroBounceSearch"
+              (keyup.enter)="searchZeroBounceQueue()"
+              placeholder="Email or source"
+            />
+          </label>
+
+          <label class="ui-field">
+            <span class="ui-label">Rows per page</span>
+            <select class="ui-select" [(ngModel)]="zeroBouncePageSize" (change)="zeroBouncePage = 1; previewZeroBounceSegment()">
+              <option [ngValue]="10">10</option>
+              <option [ngValue]="25">25</option>
+              <option [ngValue]="50">50</option>
+              <option [ngValue]="100">100</option>
+            </select>
           </label>
 
           <div class="verification-zerobounce__actions">
@@ -513,56 +529,82 @@
               <span class="ui-spinner ui-spinner--button" *ngIf="zeroBounceLoading === 'credits'" aria-hidden="true"></span>
               Check credits
             </button>
-            <button class="ui-button" type="button" (click)="previewZeroBounceSegment()" [disabled]="zeroBounceLoading !== ''">
+            <button class="ui-button" type="button" (click)="searchZeroBounceQueue()" [disabled]="zeroBounceLoading !== ''">
               <span class="ui-spinner ui-spinner--button" *ngIf="zeroBounceLoading === 'preview'" aria-hidden="true"></span>
-              Preview batch
+              Load queue
+            </button>
+            <button
+              class="ui-button"
+              type="button"
+              (click)="selectZeroBouncePilot()"
+              [disabled]="zeroBounceLoading !== '' || (zeroBouncePreview?.rows?.length || 0) < 5"
+            >
+              Select pilot 5
             </button>
             <button
               class="ui-button ui-button--primary"
               type="button"
               (click)="runZeroBounceValidation()"
-              [disabled]="zeroBounceLoading !== '' || !zeroBouncePreview?.rows?.length || !zeroBounceCredits.configured || zeroBounceCredits.validKey === false"
+              [disabled]="zeroBounceLoading !== '' || !canValidateZeroBounceSelection()"
             >
               <span class="ui-spinner ui-spinner--button" *ngIf="zeroBounceLoading === 'run'" aria-hidden="true"></span>
-              Run ZeroBounce
+              Validate selected ({{ getZeroBounceSelectedCount() }})
             </button>
           </div>
         </div>
 
         <div class="verification-zerobounce__summary" *ngIf="zeroBouncePreview">
           <div>
-            <span>Segment</span>
-            <strong>{{ getZeroBounceSegmentLabel(zeroBouncePreview.segment) }}</strong>
-          </div>
-          <div>
             <span>Total queue</span>
             <strong>{{ zeroBouncePreview.total | number }}</strong>
           </div>
           <div>
-            <span>Batch</span>
-            <strong>{{ zeroBouncePreview.rows.length | number }}</strong>
+            <span>Selected</span>
+            <strong>{{ getZeroBounceSelectedCount() | number }}</strong>
           </div>
           <div>
-            <span>Credits</span>
-            <strong>{{ zeroBouncePreview.credits === null ? '-' : (zeroBouncePreview.credits | number) }}</strong>
+            <span>Maximum cost</span>
+            <strong>{{ getZeroBounceSelectedCount() | number }} credits</strong>
+          </div>
+          <div>
+            <span>Available</span>
+            <strong>{{ zeroBounceCredits.credits === null ? '-' : ((zeroBounceCredits.credits | number) + ' credits') }}</strong>
           </div>
         </div>
 
         <div class="verification-zerobounce__preview" *ngIf="zeroBouncePreview?.rows?.length">
           <div class="verification-zerobounce__row verification-zerobounce__row--head">
-            <span>Email</span>
+            <input
+              type="checkbox"
+              aria-label="Select all emails on this page"
+              [checked]="isZeroBouncePageSelected()"
+              (change)="toggleZeroBouncePage($any($event.target).checked)"
+            />
+            <span>Original</span>
+            <span>Send to ZeroBounce</span>
             <span>Status</span>
-            <span>Reason</span>
             <span>Source</span>
             <span>Action</span>
           </div>
-          <div class="verification-zerobounce__row" *ngFor="let row of zeroBouncePreview?.rows?.slice(0, 8)">
+          <div class="verification-zerobounce__row" *ngFor="let row of zeroBouncePreview?.rows">
+            <input
+              type="checkbox"
+              [attr.aria-label]="'Select ' + row.email"
+              [checked]="isZeroBounceRowSelected(row.id)"
+              (change)="toggleZeroBounceRow(row.id, $any($event.target).checked)"
+            />
+            <div>
+              <strong>{{ row.originalEmail }}</strong>
+              <small>#{{ row.id }}</small>
+            </div>
             <div>
               <strong>{{ row.email }}</strong>
-              <small *ngIf="row.originalEmail && row.originalEmail !== row.email">Original: {{ row.originalEmail }}</small>
+              <small>{{ row.originalEmail === row.email ? 'Original address' : 'Corrected address' }}</small>
             </div>
-            <span>{{ formatMapLabel(row.verificationStatus) }} · {{ formatMapLabel(row.sendEligibility) }}</span>
-            <span>{{ row.doNotSendReason || '-' }}</span>
+            <div>
+              <strong>{{ formatMapLabel(row.verificationStatus) }}</strong>
+              <small>{{ row.doNotSendReason || formatMapLabel(row.sendEligibility) }}</small>
+            </div>
             <span>{{ row.source || row.lastValidationSource || '-' }}</span>
             <button
               class="ui-button ui-button--sm"
@@ -574,6 +616,26 @@
               Exclude
             </button>
           </div>
+        </div>
+
+        <div class="verification-zerobounce__selection" *ngIf="getZeroBounceSelectedCount() > 0">
+          <strong>{{ getZeroBounceSelectedCount() }} selected</strong>
+          <span>Only these checked rows can be submitted.</span>
+          <button class="ui-button ui-button--sm" type="button" (click)="clearZeroBounceSelection()">Clear selection</button>
+        </div>
+
+        <div class="ui-empty" *ngIf="zeroBouncePreview && zeroBouncePreview.rows.length === 0">
+          No eligible emails match this filter.
+        </div>
+
+        <div class="verification-zerobounce__pager" *ngIf="zeroBouncePreview">
+          <button class="ui-button ui-button--sm" type="button" (click)="moveZeroBouncePage(-1)" [disabled]="zeroBouncePage <= 1 || zeroBounceLoading !== ''">
+            Previous
+          </button>
+          <span>{{ getZeroBouncePageLabel() }}</span>
+          <button class="ui-button ui-button--sm" type="button" (click)="moveZeroBouncePage(1)" [disabled]="zeroBouncePage >= getZeroBounceTotalPages() || zeroBounceLoading !== ''">
+            Next
+          </button>
         </div>
 
         <div class="verification-breakdown verification-zerobounce__breakdown" *ngIf="getZeroBounceStatusRows().length">
