@@ -45,6 +45,7 @@ export interface ZeroBouncePreviewResult {
   rows: Array<{
     id: number;
     email: string;
+    originalEmail: string;
     verificationStatus: VerificationStatus;
     sendEligibility: SendEligibility;
     doNotSendReason: string | null;
@@ -120,6 +121,8 @@ export class ZeroBounceValidationService {
       .select([
         'email.id',
         'email.email',
+        'email.typoSuggestion',
+        'email.typoResolvedEmail',
         'email.verificationStatus',
         'email.sendEligibility',
         'email.doNotSendReason',
@@ -139,16 +142,24 @@ export class ZeroBounceValidationService {
       segment,
       limit,
       total,
-      rows: emails.map((email) => ({
-        id: Number(email.id),
-        email: email.email,
-        verificationStatus: email.verificationStatus,
-        sendEligibility: email.sendEligibility,
-        doNotSendReason: email.doNotSendReason || null,
-        lastValidationSource: email.lastValidationSource || null,
-        lastValidationAt: email.lastValidationAt || null,
-        source: email.acquisitionSource || null,
-      })),
+      rows: emails.map((email) => {
+        const originalEmail = this.normalizeEmail(email.email);
+        const validationEmail = segment === 'typo_resolved'
+          ? this.normalizeEmail(email.typoResolvedEmail)
+          : originalEmail;
+
+        return {
+          id: Number(email.id),
+          email: validationEmail || originalEmail,
+          originalEmail,
+          verificationStatus: email.verificationStatus,
+          sendEligibility: email.sendEligibility,
+          doNotSendReason: email.doNotSendReason || null,
+          lastValidationSource: email.lastValidationSource || null,
+          lastValidationAt: email.lastValidationAt || null,
+          source: email.acquisitionSource || null,
+        };
+      }),
       estimatedCredits: emails.length,
       credits: creditBalance?.credits ?? null,
     };
@@ -369,7 +380,9 @@ export class ZeroBounceValidationService {
         .andWhere('email.doNotSendReason = :reason', {
           reason: 'typo_accepted_external_validation_required',
         })
-        .andWhere('email.sendEligibility = :review', { review: SendEligibility.REVIEW });
+        .andWhere('email.sendEligibility = :review', { review: SendEligibility.REVIEW })
+        .andWhere('email.typoResolvedEmail IS NOT NULL')
+        .andWhere("TRIM(email.typoResolvedEmail) <> ''");
     }
 
     return query
@@ -533,6 +546,10 @@ export class ZeroBounceValidationService {
     }
 
     return String(error || 'Unknown error');
+  }
+
+  private normalizeEmail(value: string | null | undefined): string {
+    return String(value || '').trim().toLowerCase();
   }
 
   private mapSourceSegment(segment: ZeroBounceSegment): EmailValidationSourceSegment {

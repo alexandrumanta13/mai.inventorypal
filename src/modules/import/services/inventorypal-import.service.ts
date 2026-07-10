@@ -14,7 +14,7 @@ import { SendEligibilityService } from '@modules/emails/services/send-eligibilit
 import { ValidationIntakeGateService } from '@modules/email-verification/services/validation-intake-gate.service';
 import { ImportSourceType, ImportJobSourceType, ImportJobStatus } from '@shared/enums/import-source.enum';
 import { VerificationStatus } from '@shared/enums/verification-status.enum';
-import { SendEligibility } from '@shared/enums/email-validation.enum';
+import { ExternalValidationProvider, SendEligibility } from '@shared/enums/email-validation.enum';
 import { ImportJob } from '../entities/import-job.entity';
 import { SyncState } from '../entities/sync-state.entity';
 
@@ -918,7 +918,14 @@ export class InventoryPalImportService {
       return;
     }
 
-    const email = row.candidateEmail?.trim().toLowerCase();
+    const originalEmail = row.candidateEmail?.trim().toLowerCase();
+    const email = this.getEffectiveRecoverableEmail(row);
+    const externallyValidatedOriginal = originalEmail && originalEmail !== email
+      ? await this.emailRepository.findOne({ where: { email: originalEmail } })
+      : null;
+    const canInheritExternalValidation = this.canInheritRecoveredExternalValidation(
+      externallyValidatedOriginal,
+    );
     const name = this.splitName(row.customerName || row.candidateName);
     const sourceIdentifier = this.getRecoveredSourceIdentifier(row);
 
@@ -1014,10 +1021,26 @@ export class InventoryPalImportService {
           acquisitionSource: this.getRecoveredAcquisitionSource(row),
           acquisitionDate: row.orderDate || new Date(),
           funnelStage: row.status || undefined,
-          ...this.sendEligibilityService.buildUpdate({
-            verificationStatus: VerificationStatus.PENDING,
-            qualityScore: 0,
-          }),
+          ...(canInheritExternalValidation
+            ? {
+                verificationStatus: VerificationStatus.VALID,
+                qualityScore: Number(externallyValidatedOriginal.qualityScore || 95),
+                hasValidSyntax: true,
+                hasValidDns: true,
+                hasValidSmtp: true,
+                isDisposable: false,
+                hasTypo: false,
+                sendEligibility: SendEligibility.SAFE_TO_SEND,
+                doNotSendReason: null,
+                lastValidationSource: externallyValidatedOriginal.lastValidationSource,
+                lastValidationAt: externallyValidatedOriginal.lastValidationAt || new Date(),
+                lastVerifiedAt: externallyValidatedOriginal.lastVerifiedAt || new Date(),
+                smtpErrorMessage: `Promoted from externally validated typo correction of ${originalEmail}`,
+              }
+            : this.sendEligibilityService.buildUpdate({
+                verificationStatus: VerificationStatus.PENDING,
+                qualityScore: 0,
+              })),
         }),
       ));
 
@@ -1049,7 +1072,9 @@ export class InventoryPalImportService {
       });
     }
 
-    await this.validationIntakeGateService.queueValidation(email);
+    if (!canInheritExternalValidation) {
+      await this.validationIntakeGateService.queueValidation(email);
+    }
   }
 
   private async loadSyncRows(options: { daysBack: number; limit: number }): Promise<{
@@ -1828,6 +1853,26 @@ export class InventoryPalImportService {
 
   private getRecoveredSourceIdentifier(row: RecoverableMissingEmailRow): string {
     return `supplikit_recovered_by_phone_order_${row.orderId}_candidate_${row.candidateOrderId}`;
+  }
+
+  private getEffectiveRecoverableEmail(row: RecoverableMissingEmailRow): string {
+    if (row.candidateTypoResolutionStatus === 'accepted' && row.candidateTypoResolvedEmail) {
+      return row.candidateTypoResolvedEmail.trim().toLowerCase();
+    }
+
+    return row.candidateEmail?.trim().toLowerCase();
+  }
+
+  private canInheritRecoveredExternalValidation(email?: Email | null): boolean {
+    return Boolean(
+      email &&
+      email.verificationStatus === VerificationStatus.VALID &&
+      email.sendEligibility === SendEligibility.SAFE_TO_SEND &&
+      [
+        ExternalValidationProvider.ZEROBOUNCE,
+        ExternalValidationProvider.NEVERBOUNCE,
+      ].includes(email.lastValidationSource),
+    );
   }
 
   private getRecoveredAcquisitionSource(row: RecoverableMissingEmailRow): string {

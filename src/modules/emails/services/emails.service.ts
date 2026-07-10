@@ -485,6 +485,17 @@ export class EmailsService {
     return String(email || '').trim().toLowerCase();
   }
 
+  private getEffectiveEmailAddress(emailRecord: Partial<Email>): string {
+    if (emailRecord.typoResolutionStatus === 'accepted' && emailRecord.typoResolvedEmail) {
+      const correctedEmail = this.normalizeEmail(emailRecord.typoResolvedEmail);
+      if (this.hasAcceptableEmailShape(correctedEmail)) {
+        return correctedEmail;
+      }
+    }
+
+    return this.normalizeEmail(emailRecord.email);
+  }
+
   private csvEscape(value: string | number | null | undefined): string {
     const stringValue = String(value ?? '');
     if (/[",\n\r]/.test(stringValue)) {
@@ -604,7 +615,17 @@ export class EmailsService {
       .where('email.sendEligibility = :eligibility', { eligibility });
 
     if (domain) {
-      qb.andWhere('email.emailDomain = :domain', { domain });
+      qb.andWhere(
+        `(
+          email.emailDomain = :domain
+          OR (
+            email.typoResolutionStatus = 'accepted'
+            AND email.typoResolvedEmail IS NOT NULL
+            AND LOWER(SUBSTRING_INDEX(email.typoResolvedEmail, '@', -1)) = :domain
+          )
+        )`,
+        { domain },
+      );
     }
 
     if (eligibility !== SendEligibility.SAFE_TO_SEND) {
@@ -625,7 +646,7 @@ export class EmailsService {
     const rows: CampaignExportRow[] = [];
 
     for (const emailRecord of emailRows) {
-      const email = this.normalizeEmail(emailRecord.email);
+      const email = this.getEffectiveEmailAddress(emailRecord);
       if (!email || !this.hasAcceptableEmailShape(email) || seen.has(email)) {
         continue;
       }
@@ -637,7 +658,7 @@ export class EmailsService {
         customerId: emailRecord.customerId ? Number(emailRecord.customerId) : null,
         firstName: emailRecord.firstName || '',
         lastName: emailRecord.lastName || '',
-        emailDomain: emailRecord.emailDomain || email.split('@')[1] || '',
+        emailDomain: email.split('@')[1] || emailRecord.emailDomain || '',
         sendEligibility: emailRecord.sendEligibility,
         doNotSendReason: emailRecord.doNotSendReason || '',
         verificationStatus: emailRecord.verificationStatus,

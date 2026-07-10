@@ -117,6 +117,40 @@ describe('ZeroBounceValidationService', () => {
     );
   });
 
+  it('submits the accepted correction instead of the original typo address', async () => {
+    const query = createQueryBuilderMock({
+      count: 1,
+      rows: [{
+        id: 77,
+        email: 'maria@gmial.com',
+        typoSuggestion: 'maria@gmail.com',
+        typoResolvedEmail: 'maria@gmail.com',
+        verificationStatus: 'risky',
+        sendEligibility: 'review',
+        doNotSendReason: 'typo_accepted_external_validation_required',
+        lastValidationSource: 'manual',
+        lastValidationAt: null,
+        acquisitionSource: 'supplikit',
+      }],
+    });
+    emailRepository.createQueryBuilder.mockReturnValue(query);
+    configService.get.mockReturnValue(undefined);
+
+    const result = await service.previewSegment({
+      segment: 'typo_resolved',
+      limit: 10,
+      includeCredits: false,
+    });
+
+    expect(result.rows).toEqual([
+      expect.objectContaining({
+        id: 77,
+        email: 'maria@gmail.com',
+        originalEmail: 'maria@gmial.com',
+      }),
+    ]);
+  });
+
   it('excludes a candidate from external validation with an audit event', async () => {
     emailRepository.findOne.mockResolvedValueOnce({
       id: 456,

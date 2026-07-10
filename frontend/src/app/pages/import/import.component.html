@@ -435,7 +435,13 @@
                     <div class="ui-table__muted">{{ row.normalizedPhone }}</div>
                   </td>
                   <td>
-                    <div class="ui-table__primary">{{ row.candidateEmail }}</div>
+                    @if (hasAcceptedRecoverableCorrection(row)) {
+                      <div class="ui-table__primary">{{ row.candidateTypoResolvedEmail }}</div>
+                      <div class="ui-table__muted">Original: {{ row.candidateEmail }}</div>
+                      <span class="ui-badge ui-badge--success">correction saved</span>
+                    } @else {
+                      <div class="ui-table__primary">{{ row.candidateEmail }}</div>
+                    }
                     <div class="ui-table__muted">{{ row.candidateName || '-' }}</div>
                     @if (row.candidateEmailInList) {
                       <span class="ui-badge ui-badge--info">in list</span>
@@ -443,7 +449,7 @@
                         <span class="ui-table__muted">{{ row.candidateEmailStatus }}</span>
                       }
                     }
-                    @if (row.candidateTypoSuggestion) {
+                    @if (row.candidateTypoSuggestion && !hasAcceptedRecoverableCorrection(row)) {
                       <div class="recoverable-audit__suggestion">
                         <span>Suggested correction</span>
                         <strong>{{ row.candidateTypoSuggestion }}</strong>
@@ -452,9 +458,6 @@
                       <div class="recoverable-audit__suggestion recoverable-audit__suggestion--missing">
                         Typo detected, no automatic suggestion
                       </div>
-                    }
-                    @if (row.candidateTypoResolvedEmail) {
-                      <div class="ui-table__muted">Selected correction: {{ row.candidateTypoResolvedEmail }}</div>
                     }
                     @if (recoverableEditingOrderId === row.orderId) {
                       <div class="recoverable-audit__repair-editor">
@@ -528,7 +531,7 @@
                           (click)="startRecoverableTypoRepair(row)"
                           [disabled]="recoverableRowActionLoading !== ''"
                         >
-                          {{ row.candidateTypoSuggestion ? 'Review correction' : 'Repair typo' }}
+                          {{ getRecoverableRepairActionLabel(row) }}
                         </button>
                       }
                       @if (row.confidence === 'review' && !row.alreadyRecovered) {

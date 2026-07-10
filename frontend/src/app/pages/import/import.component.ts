@@ -512,7 +512,7 @@ export class ImportComponent implements OnInit {
 
   startRecoverableTypoRepair(row: RecoverableMissingEmailRow) {
     this.recoverableEditingOrderId = row.orderId;
-    this.recoverableCorrection = row.candidateTypoSuggestion || '';
+    this.recoverableCorrection = row.candidateTypoResolvedEmail || row.candidateTypoSuggestion || '';
     this.errorMessage = '';
     this.actionMessage = '';
   }
@@ -557,7 +557,7 @@ export class ImportComponent implements OnInit {
         this.recoverableRowActionLoading = '';
         this.recoverableEditingOrderId = null;
         this.recoverableCorrection = '';
-        this.actionMessage = `Saved ${correctedEmail} for external validation.`;
+        this.actionMessage = `Saved ${correctedEmail}. It remains in Needs validation until an external provider confirms it.`;
         this.loadRecoverableAudit();
       },
       error: (error) => {
@@ -610,6 +610,10 @@ export class ImportComponent implements OnInit {
   }
 
   getRecoverableQualityLabel(row: RecoverableMissingEmailRow): string {
+    if (this.hasAcceptedRecoverableCorrection(row) && this.isExternalValidationRecoverableRow(row)) {
+      return 'correction ready for validation';
+    }
+
     if (this.isExternalValidationRecoverableRow(row)) {
       return 'needs external validation';
     }
@@ -643,6 +647,18 @@ export class ImportComponent implements OnInit {
       row.candidateAcquisitionSource ? `source: ${row.candidateAcquisitionSource}` : null,
       row.candidateLastValidationSource ? `validated by: ${row.candidateLastValidationSource}` : null,
     ].filter(Boolean).join(' | ') || '-';
+  }
+
+  hasAcceptedRecoverableCorrection(row: RecoverableMissingEmailRow): boolean {
+    return row.candidateTypoResolutionStatus === 'accepted' && Boolean(row.candidateTypoResolvedEmail);
+  }
+
+  getRecoverableRepairActionLabel(row: RecoverableMissingEmailRow): string {
+    if (this.hasAcceptedRecoverableCorrection(row)) {
+      return 'Edit correction';
+    }
+
+    return row.candidateTypoSuggestion ? 'Review correction' : 'Repair typo';
   }
 
   getDomainLabel(row: { storeName?: string | null; storeUrl?: string | null; authorizedDomainId?: number }): string {

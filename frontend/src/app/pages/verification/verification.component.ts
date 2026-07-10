@@ -136,6 +136,7 @@ interface ZeroBouncePreview {
   rows: Array<{
     id: number;
     email: string;
+    originalEmail: string;
     verificationStatus: string;
     sendEligibility: string;
     doNotSendReason: string | null;

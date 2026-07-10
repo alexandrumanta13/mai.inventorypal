@@ -557,7 +557,10 @@
             <span>Action</span>
           </div>
           <div class="verification-zerobounce__row" *ngFor="let row of zeroBouncePreview?.rows?.slice(0, 8)">
-            <strong>{{ row.email }}</strong>
+            <div>
+              <strong>{{ row.email }}</strong>
+              <small *ngIf="row.originalEmail && row.originalEmail !== row.email">Original: {{ row.originalEmail }}</small>
+            </div>
             <span>{{ formatMapLabel(row.verificationStatus) }} · {{ formatMapLabel(row.sendEligibility) }}</span>
             <span>{{ row.doNotSendReason || '-' }}</span>
             <span>{{ row.source || row.lastValidationSource || '-' }}</span>

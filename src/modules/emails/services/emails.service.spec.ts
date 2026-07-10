@@ -159,4 +159,12 @@ describe('EmailsService', () => {
       }),
     );
   });
+
+  it('uses an accepted typo correction as the effective campaign address', () => {
+    expect((service as any).getEffectiveEmailAddress({
+      email: 'maria@gmial.com',
+      typoResolutionStatus: 'accepted',
+      typoResolvedEmail: 'maria@gmail.com',
+    })).toBe('maria@gmail.com');
+  });
 });
