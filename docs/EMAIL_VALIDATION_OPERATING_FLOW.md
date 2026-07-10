@@ -137,7 +137,7 @@ The validation page should expose four operator areas:
 
 - Gate: intake, queue, typo scan, suppression signals
 - Recovery: bounce recovery candidates and manual correction
-- External validation: ZeroBounce, CSV export, provider result import
-- Audit: status map, domain batches, external batch history
+- External validation: ZeroBounce, CSV export, provider result import, external batch history
+- Audit: status map and domain batches
 
 Avoid mixing scanner controls, recovery decisions, external provider actions, and audit tables in one continuous page.
