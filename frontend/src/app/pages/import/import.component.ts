@@ -261,6 +261,10 @@ export class ImportComponent implements OnInit {
     const searchTerm = this.recoverableSearchTerm.trim().toLowerCase();
 
     return this.recoverableAudit.rows.filter((row) => {
+      if (this.hasAcceptedRecoverableCorrection(row)) {
+        return false;
+      }
+
       if (!this.matchesRecoverableQueue(row)) {
         return false;
       }
@@ -287,24 +291,35 @@ export class ImportComponent implements OnInit {
   }
 
   getLoadedRecoverableRowsCount(): number {
+    return this.recoverableAudit.rows.filter(
+      (row) => !this.hasAcceptedRecoverableCorrection(row),
+    ).length;
+  }
+
+  getRawLoadedRecoverableRowsCount(): number {
     return this.recoverableAudit.rows.length;
   }
 
   isRecoverableAuditPartial(): boolean {
-    return this.recoverableAudit.recoverableOrders > this.recoverableAudit.rows.length;
+    return this.recoverableAudit.recoverableOrders > this.getRawLoadedRecoverableRowsCount();
   }
 
   getHighConfidenceRowsCount(): number {
-    return this.recoverableAudit.rows.filter((row) => row.confidence === 'high').length;
+    return this.recoverableAudit.rows.filter(
+      (row) => row.confidence === 'high' && !this.hasAcceptedRecoverableCorrection(row),
+    ).length;
   }
 
   getReviewRowsCount(): number {
-    return this.recoverableAudit.rows.filter((row) => row.confidence === 'review').length;
+    return this.recoverableAudit.rows.filter(
+      (row) => row.confidence === 'review' && !this.hasAcceptedRecoverableCorrection(row),
+    ).length;
   }
 
   getAutoQueueRowsCount(): number {
     return this.recoverableAudit.rows.filter((row) =>
       (row.confidence === 'high' || row.alreadyRecovered) &&
+      !this.hasAcceptedRecoverableCorrection(row) &&
       !this.isExternalValidationRecoverableRow(row) &&
       !this.isIgnoredRecoverableRow(row)
     ).length;
@@ -313,6 +328,7 @@ export class ImportComponent implements OnInit {
   getReviewQueueRowsCount(): number {
     return this.recoverableAudit.rows.filter((row) =>
       row.confidence === 'review' &&
+      !this.hasAcceptedRecoverableCorrection(row) &&
       !row.alreadyRecovered &&
       !this.isExternalValidationRecoverableRow(row) &&
       !this.isIgnoredRecoverableRow(row)
@@ -324,7 +340,9 @@ export class ImportComponent implements OnInit {
   }
 
   getIgnoredQueueRowsCount(): number {
-    return this.recoverableAudit.rows.filter((row) => this.isIgnoredRecoverableRow(row)).length;
+    return this.recoverableAudit.rows.filter(
+      (row) => !this.hasAcceptedRecoverableCorrection(row) && this.isIgnoredRecoverableRow(row),
+    ).length;
   }
 
   setRecoverableQueue(queue: RecoverableQueue) {
@@ -557,6 +575,12 @@ export class ImportComponent implements OnInit {
         this.recoverableRowActionLoading = '';
         this.recoverableEditingOrderId = null;
         this.recoverableCorrection = '';
+        this.recoverableAudit = {
+          ...this.recoverableAudit,
+          rows: this.recoverableAudit.rows.filter(
+            (candidate) => candidate.candidateEmailId !== row.candidateEmailId,
+          ),
+        };
         this.actionMessage = `Saved ${correctedEmail}. Moved to Recovered typo emails for ZeroBounce validation.`;
         this.loadRecoverableAudit();
       },

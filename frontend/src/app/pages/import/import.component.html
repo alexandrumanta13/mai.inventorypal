@@ -316,7 +316,7 @@
 
         @if (isRecoverableAuditPartial()) {
           <div class="recoverable-audit__notice">
-            Showing {{ getLoadedRecoverableRowsCount() | number }} of {{ recoverableAudit.recoverableOrders | number }} recoverable rows. Increase the limit and refresh to inspect the full queue.
+            Loaded {{ getRawLoadedRecoverableRowsCount() | number }} of {{ recoverableAudit.recoverableOrders | number }} recoverable source rows. Increase the limit and refresh to inspect the full queue.
           </div>
         }
 
