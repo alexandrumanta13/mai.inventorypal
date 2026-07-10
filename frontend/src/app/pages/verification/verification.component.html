@@ -60,7 +60,27 @@
       </article>
     </div>
 
-    <div class="verification-page__control-grid">
+    <nav class="verification-workflow" aria-label="Validation workflow">
+      <button type="button" [class.is-active]="activeView === 'gate'" (click)="setActiveView('gate')">
+        <span>Gate</span>
+        <strong>{{ overview.totals.pendingValidation + overview.totals.riskyOrReview | number }}</strong>
+      </button>
+      <button type="button" [class.is-active]="activeView === 'recovery'" (click)="setActiveView('recovery')">
+        <span>Recovery</span>
+        <strong>{{ getBounceStatusCount('pending') | number }}</strong>
+      </button>
+      <button type="button" [class.is-active]="activeView === 'external'" (click)="setActiveView('external')">
+        <span>External</span>
+        <strong>{{ zeroBounceCredits.credits === null ? '-' : (zeroBounceCredits.credits | number) }}</strong>
+      </button>
+      <button type="button" [class.is-active]="activeView === 'audit'" (click)="setActiveView('audit')">
+        <span>Audit</span>
+        <strong>{{ overview.totals.doNotSend | number }}</strong>
+      </button>
+    </nav>
+
+    <ng-container *ngIf="activeView === 'gate'">
+      <div class="verification-page__control-grid">
       <article class="ui-card verification-panel verification-panel--primary">
         <div class="ui-card__header">
           <div>
@@ -249,8 +269,9 @@
         </div>
       </div>
     </article>
+    </ng-container>
 
-    <article class="ui-card verification-bounce">
+    <article class="ui-card verification-bounce" *ngIf="activeView === 'recovery'">
       <div class="ui-card__header">
         <div>
           <h2 class="ui-card__title">Bounce recovery</h2>
@@ -441,7 +462,7 @@
       </div>
     </article>
 
-    <article class="ui-card verification-zerobounce">
+    <article class="ui-card verification-zerobounce" *ngIf="activeView === 'external'">
       <div class="ui-card__header">
         <div>
           <h2 class="ui-card__title">ZeroBounce API validation</h2>
@@ -629,7 +650,7 @@
       </div>
     </article>
 
-    <article class="ui-card verification-recovery-export">
+    <article class="ui-card verification-recovery-export" *ngIf="activeView === 'external'">
       <div class="ui-card__header">
         <div>
           <h2 class="ui-card__title">Recovery external validation export</h2>
@@ -785,7 +806,7 @@
       </div>
     </article>
 
-    <div class="ui-grid ui-grid--two">
+    <div class="ui-grid ui-grid--two" *ngIf="activeView === 'audit'">
       <article class="ui-card">
         <div class="ui-card__header">
           <div>

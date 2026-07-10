@@ -226,6 +226,8 @@ interface MapRow {
   count: number;
 }
 
+type VerificationView = 'gate' | 'recovery' | 'external' | 'audit';
+
 @Component({
   selector: 'app-verification',
   standalone: true,
@@ -239,6 +241,7 @@ export class VerificationComponent implements OnInit {
   errorMessage = '';
   actionMessage = '';
   lastUpdated: Date | null = null;
+  activeView: VerificationView = 'gate';
 
   overview: IntakeOverview = this.createEmptyOverview();
   queue: QueueStats = {
@@ -295,6 +298,10 @@ export class VerificationComponent implements OnInit {
 
   ngOnInit() {
     this.loadValidation();
+  }
+
+  setActiveView(view: VerificationView) {
+    this.activeView = view;
   }
 
   loadValidation() {
