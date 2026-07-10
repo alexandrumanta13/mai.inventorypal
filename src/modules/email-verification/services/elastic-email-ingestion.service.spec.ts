@@ -123,10 +123,203 @@ describe('ElasticEmailIngestionService', () => {
         acquisitionSource: 'elastic_email_suppression',
         verificationStatus: VerificationStatus.INVALID,
         sendEligibility: SendEligibility.DO_NOT_SEND,
-        doNotSendReason: 'elastic_bounce',
+        doNotSendReason: 'elastic_hard_bounce',
       }),
     );
     expect(eventRepository.save).toHaveBeenCalled();
+  });
+
+  it('stores Elastic bounce reason details instead of opaque message IDs', async () => {
+    const { service, emailRepository, eventRepository } = createService();
+    emailRepository.findOne
+      .mockResolvedValueOnce({
+        id: 31,
+        email: 'missing@gmail.com',
+        verificationStatus: VerificationStatus.PENDING,
+        sendEligibility: SendEligibility.PENDING,
+        gmailCategory: null,
+      })
+      .mockResolvedValueOnce(null);
+
+    await service.ingestPayload(
+      {
+        To: 'missing@gmail.com',
+        EventType: 'Bounce',
+        MessageCategory: 'AccountProblem',
+        Message:
+          'Mailbox unavailable. The server response was: 5.1.1 The email account does not exist.',
+        MsgID: 'opaque-message-id',
+        TransactionID: 'tx-123',
+        EventDate: '2026-07-07T08:00:00Z',
+      },
+      { dryRun: false },
+    );
+
+    expect(emailRepository.update).toHaveBeenCalledWith(
+      31,
+      expect.objectContaining({
+        verificationStatus: VerificationStatus.INVALID,
+        sendEligibility: SendEligibility.DO_NOT_SEND,
+        doNotSendReason: 'elastic_hard_bounce_mailbox_not_found',
+        smtpErrorMessage: expect.stringContaining('Mailbox unavailable'),
+      }),
+    );
+    expect(eventRepository.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        providerStatus: 'Bounce',
+        providerSubStatus: 'AccountProblem',
+        reasonCode: 'elastic_hard_bounce_mailbox_not_found',
+        rawResponse: expect.objectContaining({
+          MsgID: 'opaque-message-id',
+        }),
+      }),
+    );
+  });
+
+  it('routes Elastic soft bounces to review instead of do-not-send', async () => {
+    const { service, emailRepository, eventRepository } = createService();
+    emailRepository.findOne
+      .mockResolvedValueOnce({
+        id: 32,
+        email: 'full@gmail.com',
+        verificationStatus: VerificationStatus.PENDING,
+        sendEligibility: SendEligibility.PENDING,
+        gmailCategory: null,
+      })
+      .mockResolvedValueOnce(null);
+
+    await service.ingestPayload(
+      {
+        To: 'full@gmail.com',
+        EventType: 'Bounce',
+        MessageCategory: 'AccountProblem',
+        Message:
+          "Insufficient system storage. The server response was: 4.2.2 The recipient's inbox is out of storage space.",
+        MsgID: 'soft-message-id',
+        EventDate: '2026-07-07T08:00:00Z',
+      },
+      { dryRun: false },
+    );
+
+    expect(emailRepository.update).toHaveBeenCalledWith(
+      32,
+      expect.objectContaining({
+        verificationStatus: VerificationStatus.RISKY,
+        sendEligibility: SendEligibility.REVIEW,
+        doNotSendReason: 'elastic_soft_bounce_mailbox_full',
+        smtpErrorMessage: expect.stringContaining('out of storage'),
+      }),
+    );
+    expect(eventRepository.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mappedStatus: 'risky',
+        sendEligibility: SendEligibility.REVIEW,
+        reasonCode: 'elastic_soft_bounce_mailbox_full',
+      }),
+    );
+  });
+
+  it('routes sender authentication failures to review because they are not recipient proof', async () => {
+    const { service, emailRepository } = createService();
+    emailRepository.findOne
+      .mockResolvedValueOnce({
+        id: 33,
+        email: 'recipient@hotmail.com',
+        verificationStatus: VerificationStatus.PENDING,
+        sendEligibility: SendEligibility.PENDING,
+        gmailCategory: null,
+      })
+      .mockResolvedValueOnce(null);
+
+    await service.ingestPayload(
+      {
+        To: 'recipient@hotmail.com',
+        EventType: 'Bounce',
+        MessageCategory: 'SPFProblem',
+        Message:
+          "Mailbox unavailable. The server response was: 5.7.515 Access denied, sending domain doesn't meet the required authentication level.",
+        MsgID: 'spf-message-id',
+        EventDate: '2026-07-07T08:00:00Z',
+      },
+      { dryRun: false },
+    );
+
+    expect(emailRepository.update).toHaveBeenCalledWith(
+      33,
+      expect.objectContaining({
+        verificationStatus: VerificationStatus.RISKY,
+        sendEligibility: SendEligibility.REVIEW,
+        doNotSendReason: 'elastic_delivery_auth_failure',
+      }),
+    );
+  });
+
+  it('routes Elastic DNS failures to review because they are often recoverable domain typos', async () => {
+    const { service, emailRepository } = createService();
+    emailRepository.findOne
+      .mockResolvedValueOnce({
+        id: 34,
+        email: 'client@gmail.con',
+        verificationStatus: VerificationStatus.PENDING,
+        sendEligibility: SendEligibility.PENDING,
+        gmailCategory: null,
+      })
+      .mockResolvedValueOnce(null);
+
+    await service.ingestPayload(
+      {
+        To: 'client@gmail.con',
+        EventType: 'Bounce',
+        MessageCategory: 'DNSProblem',
+        Message: 'DNS Error: No valid MX host gmail.con',
+        MsgID: 'dns-message-id',
+        EventDate: '2026-07-07T08:00:00Z',
+      },
+      { dryRun: false },
+    );
+
+    expect(emailRepository.update).toHaveBeenCalledWith(
+      34,
+      expect.objectContaining({
+        verificationStatus: VerificationStatus.RISKY,
+        sendEligibility: SendEligibility.REVIEW,
+        doNotSendReason: 'elastic_domain_dns_failure',
+      }),
+    );
+  });
+
+  it('routes Elastic transport timeouts to review instead of hard do-not-send', async () => {
+    const { service, emailRepository } = createService();
+    emailRepository.findOne
+      .mockResolvedValueOnce({
+        id: 35,
+        email: 'client@yaho.com',
+        verificationStatus: VerificationStatus.PENDING,
+        sendEligibility: SendEligibility.PENDING,
+        gmailCategory: null,
+      })
+      .mockResolvedValueOnce(null);
+
+    await service.ingestPayload(
+      {
+        To: 'client@yaho.com',
+        EventType: 'Bounce',
+        MessageCategory: 'Timeout',
+        Message: 'Connection timed out 13.248.158.7:25',
+        MsgID: 'timeout-message-id',
+        EventDate: '2026-07-07T08:00:00Z',
+      },
+      { dryRun: false },
+    );
+
+    expect(emailRepository.update).toHaveBeenCalledWith(
+      35,
+      expect.objectContaining({
+        verificationStatus: VerificationStatus.RISKY,
+        sendEligibility: SendEligibility.REVIEW,
+        doNotSendReason: 'elastic_delivery_connection_failure',
+      }),
+    );
   });
 
   it('does not create suppression rows for missing positive recipients', async () => {

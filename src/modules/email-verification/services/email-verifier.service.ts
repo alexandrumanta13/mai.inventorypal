@@ -6,6 +6,7 @@ import { Customer } from '@modules/customers/entities/customer.entity';
 import { VerificationHistory } from '../entities/verification-history.entity';
 import { VerificationStatus } from '@shared/enums/verification-status.enum';
 import { ExternalValidationProvider } from '@shared/enums/email-validation.enum';
+import { extractEmailDomain, isPublicMailboxDomain } from '@shared/email-domain-classification';
 import { SendEligibilityService } from '@modules/emails/services/send-eligibility.service';
 import { SyntaxValidator } from '../validators/syntax.validator';
 import { DnsValidator } from '../validators/dns.validator';
@@ -155,6 +156,7 @@ export class EmailVerifierService {
     // Layer 3: SMTP Validation (optional, can be skipped for faster processing)
     let smtpResult = null;
     let hasValidSmtp = false;
+    let smtpExternalReviewReason: string | null = null;
 
     if (!skipSmtp) {
       try {
@@ -162,7 +164,40 @@ export class EmailVerifierService {
         hasValidSmtp = smtpResult.isValidMailbox;
 
         if (!smtpResult.isValidMailbox) {
-          // SMTP validation failed - mailbox doesn't exist
+          smtpExternalReviewReason = this.getSmtpExternalReviewReason(
+            normalizedEmail,
+            smtpResult.reason,
+          );
+
+          if (smtpExternalReviewReason) {
+            const result = this.createResult(
+              normalizedEmail,
+              VerificationStatus.UNKNOWN,
+              50, // Syntax + DNS passed, SMTP verdict needs external confirmation
+              syntaxResult.isValid,
+              dnsResult.isValid,
+              false,
+              filterResult.isDisposable,
+              filterResult.isRoleBased,
+              filterResult.suggestedEmail,
+              {
+                syntax: syntaxResult,
+                dns: dnsResult,
+                smtp: {
+                  ...smtpResult,
+                  requiresExternalValidation: true,
+                  externalReviewReason: smtpExternalReviewReason,
+                },
+                filter: filterResult,
+              },
+              Date.now() - startTime,
+            );
+
+            await this.saveVerification(normalizedEmail, result);
+            return result;
+          }
+
+          // SMTP validation failed with a trusted hard failure.
           const result = this.createResult(
             normalizedEmail,
             VerificationStatus.INVALID,
@@ -188,12 +223,39 @@ export class EmailVerifierService {
       } catch (error) {
         // SMTP validation error - mark as unknown
         this.logger.warn(`SMTP validation error for ${normalizedEmail}: ${error.message}`);
+        smtpExternalReviewReason = 'internal_smtp_exception';
         smtpResult = {
           isValid: false,
           isValidMailbox: false,
           reason: `SMTP error: ${error.message}`,
+          requiresExternalValidation: true,
+          externalReviewReason: smtpExternalReviewReason,
         };
       }
+    }
+
+    if (smtpExternalReviewReason) {
+      const result = this.createResult(
+        normalizedEmail,
+        VerificationStatus.UNKNOWN,
+        50,
+        syntaxResult.isValid,
+        dnsResult.isValid,
+        false,
+        filterResult.isDisposable,
+        filterResult.isRoleBased,
+        filterResult.suggestedEmail,
+        {
+          syntax: syntaxResult,
+          dns: dnsResult,
+          smtp: smtpResult,
+          filter: filterResult,
+        },
+        Date.now() - startTime,
+      );
+
+      await this.saveVerification(normalizedEmail, result);
+      return result;
     }
 
     // Calculate final quality score and status
@@ -610,6 +672,53 @@ export class EmailVerifierService {
     }
 
     return VerificationStatus.VALID;
+  }
+
+  private getSmtpExternalReviewReason(email: string, reason?: string): string | null {
+    const domain = extractEmailDomain(email);
+
+    if (isPublicMailboxDomain(domain, { includeObserve: true })) {
+      return 'public_mailbox_smtp_untrusted';
+    }
+
+    if (this.isTransientSmtpFailure(reason)) {
+      return 'transient_smtp_failure';
+    }
+
+    return null;
+  }
+
+  private isTransientSmtpFailure(reason?: string): boolean {
+    if (!reason) return false;
+
+    return [
+      'timeout',
+      'temporar',
+      'try again',
+      'system storage',
+      'storage',
+      'over quota',
+      'mailbox full',
+      'rate',
+      'greylist',
+      'too many',
+      'blocked',
+      'connection',
+      'network',
+      'unavailable',
+      'econn',
+      'etimedout',
+      'refused',
+      'reset',
+      '421',
+      '450',
+      '451',
+      '452',
+      '4.2.',
+      '4.3.',
+      '4.4.',
+      '4.7.',
+    ].some((keyword) => reason.toLowerCase().includes(keyword));
   }
 
   /**

@@ -83,6 +83,20 @@ describe('SendEligibilityService', () => {
     });
   });
 
+  it('routes internal SMTP failures with valid syntax and DNS to external validation review', () => {
+    expect(
+      service.calculate({
+        verificationStatus: VerificationStatus.UNKNOWN,
+        hasValidSyntax: true,
+        hasValidDns: true,
+        hasValidSmtp: false,
+      }),
+    ).toEqual({
+      sendEligibility: SendEligibility.REVIEW,
+      doNotSendReason: 'external_validation_internal_smtp_failed',
+    });
+  });
+
   it('returns update metadata with the selected source', () => {
     const update = service.buildUpdate(
       {

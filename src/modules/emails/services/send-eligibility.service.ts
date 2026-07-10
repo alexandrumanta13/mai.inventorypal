@@ -72,6 +72,17 @@ export class SendEligibilityService {
     }
 
     if (input.verificationStatus === VerificationStatus.UNKNOWN) {
+      if (
+        input.hasValidSyntax === true &&
+        input.hasValidDns === true &&
+        input.hasValidSmtp === false
+      ) {
+        return {
+          sendEligibility: SendEligibility.REVIEW,
+          doNotSendReason: 'external_validation_internal_smtp_failed',
+        };
+      }
+
       return {
         sendEligibility: SendEligibility.REVIEW,
         doNotSendReason: 'unknown',

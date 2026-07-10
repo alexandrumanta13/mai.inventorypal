@@ -23,6 +23,8 @@ export interface ElasticEmailEventInput {
   email: string;
   status: string;
   subStatus?: string | null;
+  reasonMessage?: string | null;
+  messageCategory?: string | null;
   eventDate?: Date | null;
   messageId?: string | null;
   transactionId?: string | null;
@@ -373,7 +375,7 @@ export class ElasticEmailIngestionService {
     batchId: number | null,
   ): Promise<void> {
     const normalizedEmail = event.email.trim().toLowerCase();
-    const mapping = this.mapProviderStatus(event.status, event.subStatus);
+    const mapping = this.mapProviderStatus(event.status, event.subStatus, event.reasonMessage);
     result.byMappedStatus[mapping.mappedStatus] = (result.byMappedStatus[mapping.mappedStatus] || 0) + 1;
 
     if (mapping.disposition === 'neutral') {
@@ -559,20 +561,41 @@ export class ElasticEmailIngestionService {
 
     if (mapping.mappedStatus === EmailValidationMappedStatus.INVALID) {
       const nextStatus = VerificationStatus.INVALID;
+      const eligibilityUpdate = this.sendEligibilityService.buildUpdate(
+        {
+          verificationStatus: nextStatus,
+          previousVerificationStatus: emailRecord.verificationStatus,
+          gmailCategory: emailRecord.gmailCategory,
+        },
+        ExternalValidationProvider.ELASTIC_EMAIL,
+      );
+
       return {
         verificationStatus: nextStatus,
         qualityScore: 0,
         hasValidSmtp: false,
         smtpResultCode: event.status,
         smtpErrorMessage: this.buildSmtpErrorMessage(event, 'Elastic Email bounce/delivery failure'),
-        ...this.sendEligibilityService.buildUpdate(
-          {
-            verificationStatus: nextStatus,
-            previousVerificationStatus: emailRecord.verificationStatus,
-            gmailCategory: emailRecord.gmailCategory,
-          },
-          ExternalValidationProvider.ELASTIC_EMAIL,
-        ),
+        ...eligibilityUpdate,
+        doNotSendReason:
+          eligibilityUpdate.doNotSendReason === 'bounce_after_unsubscribe'
+            ? eligibilityUpdate.doNotSendReason
+            : mapping.reasonCode,
+        lastVerifiedAt: now,
+      };
+    }
+
+    if (mapping.mappedStatus === EmailValidationMappedStatus.RISKY) {
+      return {
+        verificationStatus: VerificationStatus.RISKY,
+        qualityScore: Math.min(Number(emailRecord.qualityScore || 45), 45),
+        hasValidSmtp: false,
+        smtpResultCode: event.status,
+        smtpErrorMessage: this.buildSmtpErrorMessage(event, 'Elastic Email soft/transient bounce'),
+        sendEligibility: SendEligibility.REVIEW,
+        doNotSendReason: mapping.reasonCode,
+        lastValidationSource: ExternalValidationProvider.ELASTIC_EMAIL,
+        lastValidationAt: now,
         lastVerifiedAt: now,
       };
     }
@@ -670,7 +693,7 @@ export class ElasticEmailIngestionService {
         hasValidSmtp: mapping.mappedStatus === EmailValidationMappedStatus.INVALID ? false : null,
         smtpResultCode: event.status,
         smtpErrorMessage: this.buildSmtpErrorMessage(event, 'Elastic Email suppression event'),
-        sendEligibility: SendEligibility.DO_NOT_SEND,
+        sendEligibility: mapping.sendEligibility,
         doNotSendReason: mapping.reasonCode,
         lastValidationSource: ExternalValidationProvider.ELASTIC_EMAIL,
         lastValidationAt: now,
@@ -685,6 +708,10 @@ export class ElasticEmailIngestionService {
     }
 
     if (mappedStatus === EmailValidationMappedStatus.ABUSE) {
+      return VerificationStatus.RISKY;
+    }
+
+    if (mappedStatus === EmailValidationMappedStatus.RISKY) {
       return VerificationStatus.RISKY;
     }
 
@@ -726,7 +753,7 @@ export class ElasticEmailIngestionService {
         inputEmail: event.email,
         normalizedEmail,
         providerStatus: event.status,
-        providerSubStatus: event.subStatus || event.messageId || event.transactionId || null,
+        providerSubStatus: event.subStatus || event.messageCategory || null,
         mappedStatus: mapping.mappedStatus,
         sendEligibility,
         reasonCode,
@@ -809,6 +836,8 @@ export class ElasticEmailIngestionService {
       subStatus: this.firstString(row, [
         'subStatus',
         'SubStatus',
+        'MessageCategory',
+        'messageCategory',
         'reason',
         'Reason',
         'category',
@@ -816,6 +845,19 @@ export class ElasticEmailIngestionService {
         'error',
         'Error',
       ]),
+      reasonMessage: this.firstString(row, [
+        'message',
+        'Message',
+        'reason',
+        'Reason',
+        'error',
+        'Error',
+        'StatusMessage',
+        'statusMessage',
+        'description',
+        'Description',
+      ]),
+      messageCategory: this.firstString(row, ['MessageCategory', 'messageCategory']),
       eventDate: this.parseDate(
         this.firstString(row, [
           'date',
@@ -836,21 +878,51 @@ export class ElasticEmailIngestionService {
     };
   }
 
-  private mapProviderStatus(status: string, subStatus?: string | null): {
+  private mapProviderStatus(status: string, subStatus?: string | null, reasonMessage?: string | null): {
     mappedStatus: EmailValidationMappedStatus;
     disposition: ElasticEmailDisposition;
     sendEligibility: SendEligibility;
     reasonCode: string | null;
     confidenceScore: number;
   } {
-    const normalized = `${status || ''} ${subStatus || ''}`.toLowerCase();
+    const normalized = `${status || ''} ${subStatus || ''} ${reasonMessage || ''}`.toLowerCase();
 
     if (/\b(error|bounce|bounced|not delivered|failed|suppressed)\b/.test(normalized) || status === '4') {
+      if (this.isElasticSenderAuthFailure(normalized)) {
+        return {
+          mappedStatus: EmailValidationMappedStatus.RISKY,
+          disposition: 'negative',
+          sendEligibility: SendEligibility.REVIEW,
+          reasonCode: 'elastic_delivery_auth_failure',
+          confidenceScore: 60,
+        };
+      }
+
+      if (this.isSoftElasticBounce(normalized)) {
+        return {
+          mappedStatus: EmailValidationMappedStatus.RISKY,
+          disposition: 'negative',
+          sendEligibility: SendEligibility.REVIEW,
+          reasonCode: this.getSoftElasticBounceReasonCode(normalized),
+          confidenceScore: 70,
+        };
+      }
+
+      if (this.isElasticDomainOrTransportFailure(normalized)) {
+        return {
+          mappedStatus: EmailValidationMappedStatus.RISKY,
+          disposition: 'negative',
+          sendEligibility: SendEligibility.REVIEW,
+          reasonCode: this.getElasticDomainOrTransportReasonCode(normalized),
+          confidenceScore: 65,
+        };
+      }
+
       return {
         mappedStatus: EmailValidationMappedStatus.INVALID,
         disposition: 'negative',
         sendEligibility: SendEligibility.DO_NOT_SEND,
-        reasonCode: 'elastic_bounce',
+        reasonCode: this.getHardElasticBounceReasonCode(normalized),
         confidenceScore: 100,
       };
     }
@@ -908,6 +980,113 @@ export class ElasticEmailIngestionService {
     return null;
   }
 
+  private isSoftElasticBounce(normalized: string): boolean {
+    return [
+      '4.2.',
+      '4.3.',
+      '4.4.',
+      '4.7.',
+      'temporar',
+      'try again',
+      'insufficient system storage',
+      'out of storage',
+      'over quota',
+      'mailbox full',
+      'quota exceeded',
+      'too many',
+      'rate limit',
+      'greylist',
+      'deferred',
+    ].some((keyword) => normalized.includes(keyword));
+  }
+
+  private isElasticSenderAuthFailure(normalized: string): boolean {
+    return [
+      'spfproblem',
+      'spf problem',
+      'dkim',
+      'dmarc',
+      'access denied',
+      'sending domain',
+      "sender's domain",
+      'authentication level',
+      'authentication failed',
+      'domain does not pass',
+      'not authorized',
+    ].some((keyword) => normalized.includes(keyword));
+  }
+
+  private isElasticDomainOrTransportFailure(normalized: string): boolean {
+    return [
+      'dnsproblem',
+      'dns problem',
+      'dns error',
+      'no valid mx',
+      'no mx',
+      'timeout',
+      'timed out',
+      'connectionproblem',
+      'connection problem',
+      'connection refused',
+      'connection reset',
+    ].some((keyword) => normalized.includes(keyword));
+  }
+
+  private getSoftElasticBounceReasonCode(normalized: string): string {
+    if (
+      normalized.includes('insufficient system storage') ||
+      normalized.includes('out of storage') ||
+      normalized.includes('over quota') ||
+      normalized.includes('mailbox full') ||
+      normalized.includes('quota exceeded')
+    ) {
+      return 'elastic_soft_bounce_mailbox_full';
+    }
+
+    if (
+      normalized.includes('rate limit') ||
+      normalized.includes('too many') ||
+      normalized.includes('greylist') ||
+      normalized.includes('deferred')
+    ) {
+      return 'elastic_soft_bounce_rate_limited';
+    }
+
+    return 'elastic_soft_bounce_temporary';
+  }
+
+  private getElasticDomainOrTransportReasonCode(normalized: string): string {
+    if (
+      normalized.includes('dnsproblem') ||
+      normalized.includes('dns problem') ||
+      normalized.includes('dns error') ||
+      normalized.includes('no valid mx') ||
+      normalized.includes('no mx')
+    ) {
+      return 'elastic_domain_dns_failure';
+    }
+
+    return 'elastic_delivery_connection_failure';
+  }
+
+  private getHardElasticBounceReasonCode(normalized: string): string {
+    if (
+      normalized.includes('5.1.1') ||
+      normalized.includes('user does not exist') ||
+      normalized.includes('no such user') ||
+      normalized.includes('mailbox unavailable') ||
+      normalized.includes('recipient address rejected')
+    ) {
+      return 'elastic_hard_bounce_mailbox_not_found';
+    }
+
+    if (normalized.includes('disabled') || normalized.includes('inactive')) {
+      return 'elastic_hard_bounce_account_disabled';
+    }
+
+    return 'elastic_hard_bounce';
+  }
+
   private rowsToMap(rows: any[], keyName: string): Record<string, number> {
     return rows.reduce((acc, row) => {
       const key = String(row[keyName] || 'unknown');
@@ -926,7 +1105,13 @@ export class ElasticEmailIngestionService {
   }
 
   private buildSmtpErrorMessage(event: ElasticEmailEventInput, prefix: string): string {
-    return [prefix, event.subStatus, event.messageId ? `messageId=${event.messageId}` : null]
+    return [
+      prefix,
+      event.subStatus || event.messageCategory || null,
+      event.reasonMessage || null,
+      event.messageId ? `messageId=${event.messageId}` : null,
+      event.transactionId ? `transactionId=${event.transactionId}` : null,
+    ]
       .filter(Boolean)
       .join(' | ');
   }

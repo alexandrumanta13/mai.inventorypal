@@ -92,6 +92,26 @@ describe('ValidationIntakeGateService', () => {
     });
   });
 
+  it('does not treat internal SMTP-only invalid as a hard suppression', async () => {
+    emailRepository.findOne.mockResolvedValue({
+      email: 'andrei.popescu@yahoo.com',
+      verificationStatus: VerificationStatus.INVALID,
+      hasValidSyntax: true,
+      hasValidDns: true,
+      hasValidSmtp: false,
+      doNotSendReason: 'invalid',
+      lastValidationSource: 'internal',
+    });
+
+    await expect(service.evaluate('andrei.popescu@yahoo.com')).resolves.toMatchObject({
+      accepted: true,
+      decision: 'accepted_pending_validation',
+      normalizedEmail: 'andrei.popescu@yahoo.com',
+      reasonCode: 'accepted',
+      existingStatus: VerificationStatus.INVALID,
+    });
+  });
+
   it('routes common provider typo candidates to typo review', async () => {
     await expect(service.evaluate('andrei.popescu@gamil.com')).resolves.toMatchObject({
       accepted: false,
@@ -235,5 +255,30 @@ describe('ValidationIntakeGateService', () => {
 
     await expect(service.queueValidation('client@gamil.com')).resolves.toBe(false);
     expect(verificationQueue.add).not.toHaveBeenCalled();
+  });
+
+  it('queues validation again for internal SMTP-only invalid emails', async () => {
+    emailRepository.findOne.mockResolvedValueOnce({
+      email: 'client@yahoo.com',
+      verificationStatus: VerificationStatus.INVALID,
+      hasValidSyntax: true,
+      hasValidDns: true,
+      hasValidSmtp: false,
+      doNotSendReason: 'invalid',
+      lastValidationSource: 'internal',
+      hasTypo: false,
+    });
+
+    await expect(service.queueValidation('client@yahoo.com')).resolves.toBe(true);
+    expect(verificationQueue.add).toHaveBeenCalledWith(
+      'verify-email',
+      {
+        email: 'client@yahoo.com',
+        skipSmtp: false,
+      },
+      expect.objectContaining({
+        attempts: 2,
+      }),
+    );
   });
 });

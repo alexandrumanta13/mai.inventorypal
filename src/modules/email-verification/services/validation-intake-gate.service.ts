@@ -6,7 +6,7 @@ import { Repository } from 'typeorm';
 import { Email } from '@modules/emails/entities/email.entity';
 import { EmailsService, CreateEmailDto } from '@modules/emails/services/emails.service';
 import { ImportSourceType } from '@shared/enums/import-source.enum';
-import { SendEligibility } from '@shared/enums/email-validation.enum';
+import { ExternalValidationProvider, SendEligibility } from '@shared/enums/email-validation.enum';
 import { VerificationStatus } from '@shared/enums/verification-status.enum';
 import { PUBLIC_MAILBOX_DOMAINS_CORE_RO } from '@shared/email-domain-classification';
 import { FilterValidator } from '../validators/filter.validator';
@@ -127,14 +127,7 @@ export class ValidationIntakeGateService {
     }
 
     const existingEmail = await this.emailRepository.findOne({ where: { email: normalizedEmail } });
-    if (
-      existingEmail &&
-      [
-        VerificationStatus.INVALID,
-        VerificationStatus.DISPOSABLE,
-        VerificationStatus.UNSUBSCRIBED,
-      ].includes(existingEmail.verificationStatus)
-    ) {
+    if (existingEmail && this.isHardSuppressedEmail(existingEmail)) {
       return {
         accepted: false,
         decision: 'blocked',
@@ -244,11 +237,7 @@ export class ValidationIntakeGateService {
     }
 
     if (
-      [
-        VerificationStatus.INVALID,
-        VerificationStatus.DISPOSABLE,
-        VerificationStatus.UNSUBSCRIBED,
-      ].includes(emailRecord.verificationStatus) ||
+      this.isHardSuppressedEmail(emailRecord) ||
       emailRecord.hasTypo
     ) {
       return false;
@@ -272,6 +261,30 @@ export class ValidationIntakeGateService {
     );
 
     return true;
+  }
+
+  private isHardSuppressedEmail(email: Partial<Email>): boolean {
+    if (this.isInternalSmtpOnlyInvalid(email)) {
+      return false;
+    }
+
+    return [
+      VerificationStatus.INVALID,
+      VerificationStatus.DISPOSABLE,
+      VerificationStatus.UNSUBSCRIBED,
+    ].includes(email.verificationStatus);
+  }
+
+  private isInternalSmtpOnlyInvalid(email: Partial<Email>): boolean {
+    return (
+      email.verificationStatus === VerificationStatus.INVALID &&
+      email.hasValidSyntax === true &&
+      email.hasValidDns === true &&
+      email.hasValidSmtp === false &&
+      (!email.doNotSendReason || email.doNotSendReason === 'invalid') &&
+      (!email.lastValidationSource ||
+        email.lastValidationSource === ExternalValidationProvider.INTERNAL)
+    );
   }
 
   async getOverview(): Promise<IntakeOverview> {
