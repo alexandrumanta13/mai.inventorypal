@@ -34,4 +34,14 @@ describe('InventoryPalImportService recovery email selection', () => {
       lastValidationSource: ExternalValidationProvider.INTERNAL,
     })).toBe(false);
   });
+
+  it('removes accepted corrections from the import needs-validation queue', () => {
+    expect(service.needsExternalValidationForRecoverableCandidate({
+      verificationStatus: VerificationStatus.RISKY,
+      sendEligibility: SendEligibility.REVIEW,
+      doNotSendReason: 'typo_accepted_external_validation_required',
+      typoResolutionStatus: 'accepted',
+      typoResolvedEmail: 'maria@gmail.com',
+    }, false)).toBe(false);
+  });
 });

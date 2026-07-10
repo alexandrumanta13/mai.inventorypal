@@ -557,7 +557,7 @@ export class ImportComponent implements OnInit {
         this.recoverableRowActionLoading = '';
         this.recoverableEditingOrderId = null;
         this.recoverableCorrection = '';
-        this.actionMessage = `Saved ${correctedEmail}. It remains in Needs validation until an external provider confirms it.`;
+        this.actionMessage = `Saved ${correctedEmail}. Moved to Recovered typo emails for ZeroBounce validation.`;
         this.loadRecoverableAudit();
       },
       error: (error) => {
@@ -610,8 +610,8 @@ export class ImportComponent implements OnInit {
   }
 
   getRecoverableQualityLabel(row: RecoverableMissingEmailRow): string {
-    if (this.hasAcceptedRecoverableCorrection(row) && this.isExternalValidationRecoverableRow(row)) {
-      return 'correction ready for validation';
+    if (this.hasAcceptedRecoverableCorrection(row)) {
+      return 'queued for ZeroBounce';
     }
 
     if (this.isExternalValidationRecoverableRow(row)) {

@@ -1492,13 +1492,6 @@ export class InventoryPalImportService {
       return false;
     }
 
-    if (
-      email.sendEligibility === SendEligibility.REVIEW &&
-      email.doNotSendReason === 'typo_accepted_external_validation_required'
-    ) {
-      return true;
-    }
-
     if (email.verificationStatus !== VerificationStatus.INVALID) {
       return false;
     }

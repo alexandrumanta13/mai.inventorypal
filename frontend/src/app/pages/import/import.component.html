@@ -524,7 +524,7 @@
                   </td>
                   <td>
                     <div class="ui-table__actions">
-                      @if (isExternalValidationRecoverableRow(row) && row.candidateEmailId && recoverableEditingOrderId !== row.orderId) {
+                      @if ((isExternalValidationRecoverableRow(row) || hasAcceptedRecoverableCorrection(row)) && row.candidateEmailId && recoverableEditingOrderId !== row.orderId) {
                         <button
                           class="ui-button ui-button--sm ui-button--primary"
                           type="button"
