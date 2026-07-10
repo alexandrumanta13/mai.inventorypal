@@ -11,6 +11,10 @@ import {
   SendEligibility,
 } from '@shared/enums/email-validation.enum';
 import { VerificationStatus } from '@shared/enums/verification-status.enum';
+import {
+  extractEmailDomain,
+  isPublicMailboxDomain,
+} from '@shared/email-domain-classification';
 import { EmailValidationBatch } from '../entities/email-validation-batch.entity';
 import { EmailValidationEvent } from '../entities/email-validation-event.entity';
 
@@ -68,6 +72,18 @@ interface NormalizedExternalValidationRow {
   providerSubStatus: string | null;
   raw: Record<string, any>;
 }
+
+const TEMPORARY_EXTERNAL_SUB_STATUSES = new Set([
+  'antispam_system',
+  'exception_occurred',
+  'failed_smtp_connection',
+  'forcible_disconnect',
+  'greylisted',
+  'mail_server_did_not_respond',
+  'mail_server_temporary_error',
+  'mailbox_quota_exceeded',
+  'timeout_exceeded',
+]);
 
 @Injectable()
 export class ExternalValidationImportService {
@@ -199,7 +215,10 @@ export class ExternalValidationImportService {
     dryRun: boolean,
     batchId: number | null,
   ) {
-    const mappedStatus = this.mapProviderStatus(row.providerStatus, row.providerSubStatus);
+    const mappedStatus = this.applyProviderPolicy(
+      row,
+      this.mapProviderStatus(row.providerStatus, row.providerSubStatus),
+    );
     result.byMappedStatus[mappedStatus] = (result.byMappedStatus[mappedStatus] || 0) + 1;
     result.processed++;
 
@@ -223,7 +242,12 @@ export class ExternalValidationImportService {
     }
 
     result.matched++;
-    const decision = this.buildDecision(emailRecord, mappedStatus);
+    const decision = this.buildDecision(
+      emailRecord,
+      mappedStatus,
+      row.email,
+      row.providerSubStatus,
+    );
 
     if (!dryRun) {
       await this.eventRepository.save(
@@ -275,7 +299,12 @@ export class ExternalValidationImportService {
     });
   }
 
-  private buildDecision(emailRecord: Email, mappedStatus: EmailValidationMappedStatus): {
+  private buildDecision(
+    emailRecord: Email,
+    mappedStatus: EmailValidationMappedStatus,
+    inputEmail: string,
+    providerSubStatus: string | null,
+  ): {
     verificationStatus: VerificationStatus;
     qualityScore: number;
     hasValidSyntax: boolean;
@@ -289,7 +318,15 @@ export class ExternalValidationImportService {
     smtpErrorMessage: string;
   } {
     const protectedReason = this.getProtectedReason(emailRecord);
-    if (protectedReason && mappedStatus === EmailValidationMappedStatus.VALID) {
+    const providerRequiresBlocking = [
+      EmailValidationMappedStatus.INVALID,
+      EmailValidationMappedStatus.DISPOSABLE,
+      EmailValidationMappedStatus.DO_NOT_MAIL,
+      EmailValidationMappedStatus.SPAMTRAP,
+      EmailValidationMappedStatus.ABUSE,
+    ].includes(mappedStatus);
+
+    if (protectedReason && !providerRequiresBlocking) {
       return {
         verificationStatus: emailRecord.verificationStatus,
         qualityScore: Number(emailRecord.qualityScore || 0),
@@ -301,7 +338,7 @@ export class ExternalValidationImportService {
         sendEligibility: SendEligibility.DO_NOT_SEND,
         reasonCode: protectedReason,
         typoResolutionNote: emailRecord.typoResolutionNote || null,
-        smtpErrorMessage: `External validation was valid, but protected suppression remains: ${protectedReason}`,
+        smtpErrorMessage: `External validation did not override protected suppression: ${protectedReason}`,
       };
     }
 
@@ -336,6 +373,26 @@ export class ExternalValidationImportService {
         reasonCode: 'external_validation_disposable',
         typoResolutionNote: emailRecord.typoResolutionNote || null,
         smtpErrorMessage: 'External validation marked email as disposable',
+      };
+    }
+
+    if (mappedStatus === EmailValidationMappedStatus.RISKY) {
+      const reasonCode = this.getPolicyReviewReason(inputEmail, providerSubStatus)
+        || 'external_validation_risky';
+      const suspectDisposable = reasonCode === 'external_validation_suspect_public_disposable';
+
+      return {
+        verificationStatus: VerificationStatus.RISKY,
+        qualityScore: 40,
+        hasValidSyntax: true,
+        hasValidDns: emailRecord.hasValidDns,
+        hasValidSmtp: false,
+        isDisposable: suspectDisposable ? false : emailRecord.isDisposable,
+        hasTypo: emailRecord.hasTypo,
+        sendEligibility: SendEligibility.REVIEW,
+        reasonCode,
+        typoResolutionNote: emailRecord.typoResolutionNote || null,
+        smtpErrorMessage: `External validation requires policy review: ${providerSubStatus || 'risky'}`,
       };
     }
 
@@ -476,6 +533,51 @@ export class ExternalValidationImportService {
     }
 
     return EmailValidationMappedStatus.UNKNOWN;
+  }
+
+  private applyProviderPolicy(
+    row: NormalizedExternalValidationRow,
+    mappedStatus: EmailValidationMappedStatus,
+  ): EmailValidationMappedStatus {
+    const subStatus = this.normalizeProviderCode(row.providerSubStatus);
+
+    if (TEMPORARY_EXTERNAL_SUB_STATUSES.has(subStatus)) {
+      return EmailValidationMappedStatus.RISKY;
+    }
+
+    if (
+      subStatus === 'disposable'
+      && isPublicMailboxDomain(extractEmailDomain(row.email), { includeObserve: true })
+    ) {
+      return EmailValidationMappedStatus.RISKY;
+    }
+
+    return mappedStatus;
+  }
+
+  private getPolicyReviewReason(email: string, providerSubStatus: string | null): string | null {
+    const subStatus = this.normalizeProviderCode(providerSubStatus);
+
+    if (TEMPORARY_EXTERNAL_SUB_STATUSES.has(subStatus)) {
+      return `external_validation_temporary_${subStatus}`;
+    }
+
+    if (
+      subStatus === 'disposable'
+      && isPublicMailboxDomain(extractEmailDomain(email), { includeObserve: true })
+    ) {
+      return 'external_validation_suspect_public_disposable';
+    }
+
+    return null;
+  }
+
+  private normalizeProviderCode(value: string | null | undefined): string {
+    return String(value || '')
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '');
   }
 
   private normalizeProvider(provider?: ExternalValidationProvider): ExternalValidationProvider {

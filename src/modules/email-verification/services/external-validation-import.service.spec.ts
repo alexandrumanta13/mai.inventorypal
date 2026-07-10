@@ -138,4 +138,145 @@ describe('ExternalValidationImportService', () => {
     });
     expect(emailRepository.update).not.toHaveBeenCalled();
   });
+
+  it('keeps temporary mailbox quota failures in review instead of blocking permanently', async () => {
+    emailRepository.findOne.mockResolvedValueOnce({
+      id: 126,
+      email: 'full@gmail.com',
+      verificationStatus: VerificationStatus.RISKY,
+      qualityScore: 50,
+      hasValidDns: true,
+      hasTypo: true,
+      isDisposable: false,
+    });
+
+    const result = await service.importRows({
+      provider: ExternalValidationProvider.ZEROBOUNCE,
+      rows: [{
+        email: 'full@gmail.com',
+        emailId: 126,
+        providerStatus: 'invalid',
+        providerSubStatus: 'mailbox_quota_exceeded',
+      }],
+    });
+
+    expect(result.rows[0]).toMatchObject({
+      mappedStatus: EmailValidationMappedStatus.RISKY,
+      sendEligibility: SendEligibility.REVIEW,
+      reasonCode: 'external_validation_temporary_mailbox_quota_exceeded',
+    });
+    expect(eventRepository.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        providerStatus: 'invalid',
+        providerSubStatus: 'mailbox_quota_exceeded',
+        mappedStatus: EmailValidationMappedStatus.RISKY,
+        sendEligibility: SendEligibility.REVIEW,
+      }),
+    );
+    expect(emailRepository.update).toHaveBeenCalledWith(
+      126,
+      expect.objectContaining({
+        verificationStatus: VerificationStatus.RISKY,
+        sendEligibility: SendEligibility.REVIEW,
+        doNotSendReason: 'external_validation_temporary_mailbox_quota_exceeded',
+      }),
+    );
+  });
+
+  it('sends disposable verdicts on public mailbox domains to review', async () => {
+    emailRepository.findOne.mockResolvedValueOnce({
+      id: 127,
+      email: 'client@yahoo.com',
+      verificationStatus: VerificationStatus.RISKY,
+      qualityScore: 40,
+      hasValidDns: true,
+      hasTypo: false,
+      isDisposable: false,
+    });
+
+    const result = await service.importRows({
+      provider: ExternalValidationProvider.ZEROBOUNCE,
+      rows: [{
+        email: 'client@yahoo.com',
+        emailId: 127,
+        providerStatus: 'do_not_mail',
+        providerSubStatus: 'disposable',
+      }],
+    });
+
+    expect(result.rows[0]).toMatchObject({
+      mappedStatus: EmailValidationMappedStatus.RISKY,
+      sendEligibility: SendEligibility.REVIEW,
+      reasonCode: 'external_validation_suspect_public_disposable',
+    });
+    expect(emailRepository.update).toHaveBeenCalledWith(
+      127,
+      expect.objectContaining({
+        verificationStatus: VerificationStatus.RISKY,
+        isDisposable: false,
+        sendEligibility: SendEligibility.REVIEW,
+        doNotSendReason: 'external_validation_suspect_public_disposable',
+      }),
+    );
+  });
+
+  it('still blocks disposable verdicts outside public mailbox domains', async () => {
+    emailRepository.findOne.mockResolvedValueOnce({
+      id: 128,
+      email: 'client@temporary-mail.example',
+      verificationStatus: VerificationStatus.RISKY,
+      qualityScore: 40,
+      hasTypo: false,
+      isDisposable: false,
+    });
+
+    const result = await service.importRows({
+      provider: ExternalValidationProvider.ZEROBOUNCE,
+      rows: [{
+        email: 'client@temporary-mail.example',
+        emailId: 128,
+        providerStatus: 'do_not_mail',
+        providerSubStatus: 'disposable',
+      }],
+    });
+
+    expect(result.rows[0]).toMatchObject({
+      mappedStatus: EmailValidationMappedStatus.DO_NOT_MAIL,
+      sendEligibility: SendEligibility.DO_NOT_SEND,
+      reasonCode: 'external_validation_do_not_mail',
+    });
+  });
+
+  it('does not release protected suppression for temporary provider results', async () => {
+    emailRepository.findOne.mockResolvedValueOnce({
+      id: 129,
+      email: 'unsubscribed@gmail.com',
+      gmailCategory: 'unsubscribe',
+      verificationStatus: VerificationStatus.UNSUBSCRIBED,
+      sendEligibility: SendEligibility.DO_NOT_SEND,
+      doNotSendReason: 'unsubscribed',
+      qualityScore: 0,
+      hasTypo: false,
+      isDisposable: false,
+    });
+
+    await service.importRows({
+      provider: ExternalValidationProvider.ZEROBOUNCE,
+      rows: [{
+        email: 'unsubscribed@gmail.com',
+        emailId: 129,
+        providerStatus: 'invalid',
+        providerSubStatus: 'mailbox_quota_exceeded',
+      }],
+    });
+
+    expect(emailRepository.update).toHaveBeenCalledWith(
+      129,
+      expect.objectContaining({
+        verificationStatus: VerificationStatus.UNSUBSCRIBED,
+        sendEligibility: SendEligibility.DO_NOT_SEND,
+        doNotSendReason: 'unsubscribed',
+      }),
+    );
+  });
 });
