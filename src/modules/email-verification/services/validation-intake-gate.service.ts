@@ -287,28 +287,27 @@ export class ValidationIntakeGateService {
     );
   }
 
-  async getOverview(): Promise<IntakeOverview> {
+  async getOverview(options: { includeDomains?: boolean } = {}): Promise<IntakeOverview> {
     const [
-      total,
-      pendingValidation,
-      safeToSend,
-      riskyOrReview,
-      doNotSend,
-      typoReview,
-      bounceInvalid,
       statusRows,
+      eligibilityRows,
+      typoReview,
+      gmailBounceRows,
+      reasonBounceRows,
       topDomainRows,
     ] = await Promise.all([
-      this.emailRepository.count(),
-      this.emailRepository.count({ where: { verificationStatus: VerificationStatus.PENDING } }),
-      this.emailRepository.count({ where: { sendEligibility: SendEligibility.SAFE_TO_SEND } }),
       this.emailRepository
         .createQueryBuilder('email')
-        .where('email.sendEligibility IN (:...statuses)', {
-          statuses: [SendEligibility.REVIEW, SendEligibility.PENDING],
-        })
-        .getCount(),
-      this.emailRepository.count({ where: { sendEligibility: SendEligibility.DO_NOT_SEND } }),
+        .select('email.verificationStatus', 'status')
+        .addSelect('COUNT(*)', 'count')
+        .groupBy('email.verificationStatus')
+        .getRawMany(),
+      this.emailRepository
+        .createQueryBuilder('email')
+        .select('email.sendEligibility', 'eligibility')
+        .addSelect('COUNT(*)', 'count')
+        .groupBy('email.sendEligibility')
+        .getRawMany(),
       this.emailRepository
         .createQueryBuilder('email')
         .where('email.hasTypo = true')
@@ -319,42 +318,74 @@ export class ValidationIntakeGateService {
         .getCount(),
       this.emailRepository
         .createQueryBuilder('email')
+        .select('email.gmailCategory', 'category')
+        .addSelect('COUNT(*)', 'count')
         .where('email.gmailCategory = :category', { category: 'bounce' })
-        .orWhere('email.smtpErrorMessage LIKE :bounce', { bounce: '%bounce%' })
-        .getCount(),
-      this.emailRepository
-        .createQueryBuilder('email')
-        .select('email.verificationStatus', 'status')
-        .addSelect('COUNT(*)', 'count')
-        .groupBy('email.verificationStatus')
+        .groupBy('email.gmailCategory')
         .getRawMany(),
       this.emailRepository
         .createQueryBuilder('email')
-        .select('email.emailDomain', 'domain')
+        .select('email.doNotSendReason', 'reason')
         .addSelect('COUNT(*)', 'count')
-        .addSelect(
-          'SUM(CASE WHEN email.verificationStatus = :pendingStatus THEN 1 ELSE 0 END)',
-          'pendingValidation',
-        )
-        .addSelect(
-          'SUM(CASE WHEN email.verificationStatus = :validStatus THEN 1 ELSE 0 END)',
-          'validated',
-        )
-        .where('email.emailDomain IN (:...domains)', { domains: this.publicMailboxDomains })
-        .setParameters({
-          pendingStatus: VerificationStatus.PENDING,
-          validStatus: VerificationStatus.VALID,
+        .where('email.doNotSendReason IN (:...reasons)', {
+          reasons: [
+            'bounce',
+            'bounce_after_unsubscribe',
+            'elastic_hard_bounce',
+            'elastic_hard_bounce_mailbox_not_found',
+            'elastic_hard_bounce_account_disabled',
+          ],
         })
-        .groupBy('email.emailDomain')
-        .orderBy('count', 'DESC')
-        .limit(12)
+        .groupBy('email.doNotSendReason')
         .getRawMany(),
+      options.includeDomains
+        ? this.emailRepository
+            .createQueryBuilder('email')
+            .select('email.emailDomain', 'domain')
+            .addSelect('COUNT(*)', 'count')
+            .addSelect(
+              'SUM(CASE WHEN email.verificationStatus = :pendingStatus THEN 1 ELSE 0 END)',
+              'pendingValidation',
+            )
+            .addSelect(
+              'SUM(CASE WHEN email.verificationStatus = :validStatus THEN 1 ELSE 0 END)',
+              'validated',
+            )
+            .where('email.emailDomain IN (:...domains)', { domains: this.publicMailboxDomains })
+            .setParameters({
+              pendingStatus: VerificationStatus.PENDING,
+              validStatus: VerificationStatus.VALID,
+            })
+            .groupBy('email.emailDomain')
+            .orderBy('count', 'DESC')
+            .limit(12)
+            .getRawMany()
+        : Promise.resolve([]),
     ]);
 
     const byStatus = statusRows.reduce((acc, row) => {
       acc[row.status || 'unknown'] = Number(row.count || 0);
       return acc;
     }, {} as Record<string, number>);
+
+    const byEligibility = eligibilityRows.reduce((acc, row) => {
+      acc[row.eligibility || 'unknown'] = Number(row.count || 0);
+      return acc;
+    }, {} as Record<string, number>);
+
+    const total = Object.values(byStatus).reduce<number>(
+      (sum, count) => sum + Number(count || 0),
+      0,
+    );
+    const pendingValidation = Number(byStatus[VerificationStatus.PENDING] || 0);
+    const safeToSend = Number(byEligibility[SendEligibility.SAFE_TO_SEND] || 0);
+    const riskyOrReview =
+      Number(byEligibility[SendEligibility.REVIEW] || 0) +
+      Number(byEligibility[SendEligibility.PENDING] || 0);
+    const doNotSend = Number(byEligibility[SendEligibility.DO_NOT_SEND] || 0);
+    const bounceInvalid =
+      gmailBounceRows.reduce((sum, row) => sum + Number(row.count || 0), 0) +
+      reasonBounceRows.reduce((sum, row) => sum + Number(row.count || 0), 0);
 
     return {
       totals: {

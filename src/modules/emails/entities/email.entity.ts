@@ -20,7 +20,12 @@ import { Customer } from '@modules/customers/entities/customer.entity';
 @Index('idx_last_verified', ['lastVerifiedAt'])
 @Index('idx_email_customer', ['customerId'])
 @Index('idx_email_domain', ['emailDomain'])
+@Index('idx_email_domain_status', ['emailDomain', 'verificationStatus'])
 @Index('idx_send_eligibility', ['sendEligibility'])
+@Index('idx_email_send_eligibility_reason', ['sendEligibility', 'doNotSendReason'])
+@Index('idx_email_do_not_send_reason', ['doNotSendReason'])
+@Index('idx_email_gmail_category', ['gmailCategory'])
+@Index('idx_email_typo_review', ['hasTypo', 'typoResolutionStatus'])
 export class Email {
   @PrimaryGeneratedColumn('increment', { type: 'bigint' })
   id: number;

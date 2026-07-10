@@ -64,10 +64,12 @@ export class VerificationController {
   ) {}
 
   @Get('intake-overview')
-  async getIntakeOverview() {
+  async getIntakeOverview(@Query('includeDomains') includeDomains?: string) {
     return {
       success: true,
-      overview: await this.validationIntakeGateService.getOverview(),
+      overview: await this.validationIntakeGateService.getOverview({
+        includeDomains: includeDomains === 'true',
+      }),
     };
   }
 

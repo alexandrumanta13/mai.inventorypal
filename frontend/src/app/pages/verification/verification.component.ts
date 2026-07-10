@@ -293,6 +293,10 @@ export class VerificationComponent implements OnInit {
   elasticEventStatusRows: MapRow[] = [];
   elasticEventReasonRows: MapRow[] = [];
   gmailSignalRows: MapRow[] = [];
+  private gateDetailsLoaded = false;
+  private recoveryLoaded = false;
+  private externalLoaded = false;
+  private auditLoaded = false;
 
   constructor(private readonly http: HttpClient) {}
 
@@ -302,6 +306,7 @@ export class VerificationComponent implements OnInit {
 
   setActiveView(view: VerificationView) {
     this.activeView = view;
+    this.loadActiveViewDetails();
   }
 
   loadValidation() {
@@ -309,7 +314,9 @@ export class VerificationComponent implements OnInit {
     this.errorMessage = '';
 
     forkJoin({
-      overview: this.http.get<any>('/api/verification/intake-overview').pipe(
+      overview: this.http.get<any>('/api/verification/intake-overview', {
+        params: { includeDomains: 'false' },
+      }).pipe(
         catchError(() => of({ overview: this.createEmptyOverview() })),
       ),
       queue: this.http.get<any>('/api/verification/queue-stats').pipe(
@@ -318,36 +325,14 @@ export class VerificationComponent implements OnInit {
       typo: this.http.get<any>('/api/verification/typo-audit/full-scan/status').pipe(
         catchError(() => of({ job: null })),
       ),
-      bounceSummary: this.http.get<any>('/api/verification/bounce-recovery/summary').pipe(
-        catchError(() => of({ summary: this.bounceSummary })),
-      ),
-      bounceList: this.http.get<any>(this.getBounceRecoveryUrl()).pipe(
-        catchError(() => of({ result: { total: 0, items: [] } })),
-      ),
-      suppression: this.http.get<any>('/api/verification/suppression-overview').pipe(
-        catchError(() => of({ overview: this.createEmptySuppressionOverview() })),
-      ),
-      zeroBounceCredits: this.http.get<any>('/api/verification/zerobounce/credits').pipe(
-        catchError(() => of({ result: this.zeroBounceCredits })),
-      ),
-      externalBatchAudit: this.http.get<any>('/api/verification/external-validation-batches', {
-        params: { limit: '5' },
-      }).pipe(
-        catchError(() => of({ result: [] })),
-      ),
     }).subscribe({
       next: (response) => {
         this.overview = response.overview.overview || this.createEmptyOverview();
         this.queue = response.queue.queue || this.queue;
         this.typoScanJob = response.typo.job || null;
-        this.bounceSummary = response.bounceSummary.summary || this.bounceSummary;
-        this.bounceTotal = Number(response.bounceList.result?.total || 0);
-        this.bounceCandidates = response.bounceList.result?.items || [];
-        this.setSuppressionOverview(response.suppression.overview || this.createEmptySuppressionOverview());
-        this.zeroBounceCredits = response.zeroBounceCredits.result || this.zeroBounceCredits;
-        this.externalBatchAudit = response.externalBatchAudit.result || [];
         this.lastUpdated = new Date();
         this.loading = false;
+        this.loadActiveViewDetails(true);
       },
       error: () => {
         this.errorMessage = 'Validation data could not be loaded.';
@@ -408,6 +393,7 @@ export class VerificationComponent implements OnInit {
         this.bounceSummary = response.summary.summary || this.bounceSummary;
         this.bounceTotal = Number(response.list.result?.total || 0);
         this.bounceCandidates = response.list.result?.items || [];
+        this.recoveryLoaded = true;
         this.actionLoading = '';
         this.lastUpdated = new Date();
       },
@@ -617,6 +603,10 @@ export class VerificationComponent implements OnInit {
         this.zeroBounceLoading = '';
       },
     });
+  }
+
+  refreshExternalValidationAudit() {
+    this.loadExternalValidationData(true);
   }
 
   previewZeroBounceSegment() {
@@ -968,5 +958,99 @@ export class VerificationComponent implements OnInit {
       .map(([key, count]) => ({ key, count: Number(count || 0) }))
       .sort((a, b) => b.count - a.count)
       .slice(0, limit);
+  }
+
+  private loadActiveViewDetails(force = false) {
+    if (this.activeView === 'gate') {
+      this.loadGateDetails(force);
+      return;
+    }
+
+    if (this.activeView === 'recovery') {
+      this.loadRecoveryData(force);
+      return;
+    }
+
+    if (this.activeView === 'external') {
+      this.loadExternalValidationData(force);
+      return;
+    }
+
+    if (this.activeView === 'audit') {
+      this.loadAuditData(force);
+    }
+  }
+
+  private loadGateDetails(force = false) {
+    if (this.gateDetailsLoaded && !force) {
+      return;
+    }
+
+    this.http.get<any>('/api/verification/suppression-overview').pipe(
+      catchError(() => of({ overview: this.createEmptySuppressionOverview() })),
+    ).subscribe((response) => {
+      this.setSuppressionOverview(response.overview || this.createEmptySuppressionOverview());
+      this.gateDetailsLoaded = true;
+      this.lastUpdated = new Date();
+    });
+  }
+
+  private loadRecoveryData(force = false) {
+    if (this.recoveryLoaded && !force) {
+      return;
+    }
+
+    forkJoin({
+      summary: this.http.get<any>('/api/verification/bounce-recovery/summary').pipe(
+        catchError(() => of({ summary: this.bounceSummary })),
+      ),
+      list: this.http.get<any>(this.getBounceRecoveryUrl()).pipe(
+        catchError(() => of({ result: { total: 0, items: [] } })),
+      ),
+    }).subscribe((response) => {
+      this.bounceSummary = response.summary.summary || this.bounceSummary;
+      this.bounceTotal = Number(response.list.result?.total || 0);
+      this.bounceCandidates = response.list.result?.items || [];
+      this.recoveryLoaded = true;
+      this.lastUpdated = new Date();
+    });
+  }
+
+  private loadExternalValidationData(force = false) {
+    if (this.externalLoaded && !force) {
+      return;
+    }
+
+    forkJoin({
+      zeroBounceCredits: this.http.get<any>('/api/verification/zerobounce/credits').pipe(
+        catchError(() => of({ result: this.zeroBounceCredits })),
+      ),
+      externalBatchAudit: this.http.get<any>('/api/verification/external-validation-batches', {
+        params: { limit: '5' },
+      }).pipe(
+        catchError(() => of({ result: [] })),
+      ),
+    }).subscribe((response) => {
+      this.zeroBounceCredits = response.zeroBounceCredits.result || this.zeroBounceCredits;
+      this.externalBatchAudit = response.externalBatchAudit.result || [];
+      this.externalLoaded = true;
+      this.lastUpdated = new Date();
+    });
+  }
+
+  private loadAuditData(force = false) {
+    if (this.auditLoaded && !force) {
+      return;
+    }
+
+    this.http.get<any>('/api/verification/intake-overview', {
+      params: { includeDomains: 'true' },
+    }).pipe(
+      catchError(() => of({ overview: this.overview })),
+    ).subscribe((response) => {
+      this.overview = response.overview || this.overview;
+      this.auditLoaded = true;
+      this.lastUpdated = new Date();
+    });
   }
 }

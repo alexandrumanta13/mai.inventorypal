@@ -568,7 +568,7 @@
         <div class="verification-batch-audit" *ngIf="externalBatchAudit.length > 0">
           <div class="verification-batch-audit__header">
             <h3>External validation audit</h3>
-            <button class="ui-button ui-button--sm" type="button" (click)="loadValidation()" [disabled]="loading || zeroBounceLoading !== ''">
+            <button class="ui-button ui-button--sm" type="button" (click)="refreshExternalValidationAudit()" [disabled]="zeroBounceLoading !== ''">
               Refresh audit
             </button>
           </div>
