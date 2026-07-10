@@ -10,6 +10,7 @@ describe('EmailsService', () => {
   let service: EmailsService;
   let emailRepository: {
     findOne: jest.Mock;
+    findOneOrFail: jest.Mock;
     update: jest.Mock;
     save: jest.Mock;
     create: jest.Mock;
@@ -25,6 +26,7 @@ describe('EmailsService', () => {
   beforeEach(() => {
     emailRepository = {
       findOne: jest.fn(),
+      findOneOrFail: jest.fn(),
       update: jest.fn().mockResolvedValue({ affected: 1 }),
       save: jest.fn(),
       create: jest.fn((data) => data),
@@ -105,5 +107,56 @@ describe('EmailsService', () => {
         sourceIdentifier: 'quality_gate_test_supplikit_order_1',
       },
     });
+  });
+
+  it('accepts a manual typo correction when the scanner has no suggestion', async () => {
+    const existingEmail = {
+      id: 77,
+      email: 'maria@gmial.com',
+      emailDomain: 'gmial.com',
+      hasTypo: true,
+      typoSuggestion: null,
+      typoResolutionStatus: 'pending',
+      verificationStatus: VerificationStatus.INVALID,
+      qualityScore: 0,
+      isDisposable: false,
+      isRoleBased: false,
+    } as Email;
+    const updatedEmail = {
+      ...existingEmail,
+      typoSuggestion: 'maria@gmail.com',
+      typoResolvedEmail: 'maria@gmail.com',
+      typoResolutionStatus: 'accepted',
+      verificationStatus: VerificationStatus.RISKY,
+    } as Email;
+
+    emailRepository.findOne.mockResolvedValue(existingEmail);
+    emailRepository.findOneOrFail.mockResolvedValue(updatedEmail);
+
+    await expect(
+      service.resolveTypoCandidate(77, {
+        action: 'accept',
+        resolvedEmail: 'maria@gmail.com',
+        note: 'Manual correction from import audit',
+      }),
+    ).resolves.toMatchObject({
+      id: 77,
+      typoResolvedEmail: 'maria@gmail.com',
+      typoResolutionStatus: 'accepted',
+    });
+
+    expect(emailRepository.update).toHaveBeenCalledWith(
+      77,
+      expect.objectContaining({
+        hasTypo: true,
+        typoSuggestion: 'maria@gmail.com',
+        typoResolvedEmail: 'maria@gmail.com',
+        typoResolutionStatus: 'accepted',
+        verificationStatus: VerificationStatus.RISKY,
+        sendEligibility: SendEligibility.REVIEW,
+        doNotSendReason: 'typo_accepted_external_validation_required',
+        lastValidationSource: ExternalValidationProvider.MANUAL,
+      }),
+    );
   });
 });

@@ -36,7 +36,7 @@ describe('SendEligibilityService', () => {
   it('routes pending typo candidates to review', () => {
     expect(
       service.calculate({
-        verificationStatus: VerificationStatus.PENDING,
+        verificationStatus: VerificationStatus.RISKY,
         hasTypo: true,
         typoResolutionStatus: 'pending',
       }),
@@ -49,7 +49,7 @@ describe('SendEligibilityService', () => {
   it('requires external validation review after accepting a typo fix', () => {
     expect(
       service.calculate({
-        verificationStatus: VerificationStatus.PENDING,
+        verificationStatus: VerificationStatus.RISKY,
         hasTypo: true,
         typoResolutionStatus: 'accepted',
       }),

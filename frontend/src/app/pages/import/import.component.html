@@ -443,6 +443,53 @@
                         <span class="ui-table__muted">{{ row.candidateEmailStatus }}</span>
                       }
                     }
+                    @if (row.candidateTypoSuggestion) {
+                      <div class="recoverable-audit__suggestion">
+                        <span>Suggested correction</span>
+                        <strong>{{ row.candidateTypoSuggestion }}</strong>
+                      </div>
+                    } @else if (row.candidateHasTypo) {
+                      <div class="recoverable-audit__suggestion recoverable-audit__suggestion--missing">
+                        Typo detected, no automatic suggestion
+                      </div>
+                    }
+                    @if (row.candidateTypoResolvedEmail) {
+                      <div class="ui-table__muted">Selected correction: {{ row.candidateTypoResolvedEmail }}</div>
+                    }
+                    @if (recoverableEditingOrderId === row.orderId) {
+                      <div class="recoverable-audit__repair-editor">
+                        <input
+                          class="ui-input"
+                          type="email"
+                          [(ngModel)]="recoverableCorrection"
+                          placeholder="Corrected email"
+                          [attr.aria-label]="'Corrected email for ' + row.candidateEmail"
+                        />
+                        <div class="ui-table__actions">
+                          <button
+                            class="ui-button ui-button--sm ui-button--primary"
+                            type="button"
+                            (click)="saveRecoverableTypoRepair(row)"
+                            [disabled]="recoverableRowActionLoading !== ''"
+                          >
+                            @if (recoverableRowActionLoading === 'repair-' + row.orderId) {
+                              <span class="ui-spinner ui-spinner--button" aria-hidden="true"></span>
+                              Saving
+                            } @else {
+                              Save correction
+                            }
+                          </button>
+                          <button
+                            class="ui-button ui-button--sm"
+                            type="button"
+                            (click)="cancelRecoverableTypoRepair()"
+                            [disabled]="recoverableRowActionLoading !== ''"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    }
                   </td>
                   <td>
                     <span class="ui-badge" [ngClass]="getRecoverableQualityClass(row)">
@@ -474,6 +521,16 @@
                   </td>
                   <td>
                     <div class="ui-table__actions">
+                      @if (isExternalValidationRecoverableRow(row) && row.candidateEmailId && recoverableEditingOrderId !== row.orderId) {
+                        <button
+                          class="ui-button ui-button--sm ui-button--primary"
+                          type="button"
+                          (click)="startRecoverableTypoRepair(row)"
+                          [disabled]="recoverableRowActionLoading !== ''"
+                        >
+                          {{ row.candidateTypoSuggestion ? 'Review correction' : 'Repair typo' }}
+                        </button>
+                      }
                       @if (row.confidence === 'review' && !row.alreadyRecovered) {
                         <button
                           class="ui-button ui-button--sm"

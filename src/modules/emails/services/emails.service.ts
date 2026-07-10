@@ -1019,7 +1019,11 @@ export class EmailsService {
     },
   ): Promise<TypoResolutionResult> {
     const emailRecord = await this.emailRepository.findOne({ where: { id: emailId } });
-    if (!emailRecord || !emailRecord.hasTypo || !emailRecord.typoSuggestion) {
+    const hasExplicitCorrection = options.action === 'accept' && Boolean(options.resolvedEmail?.trim());
+    if (
+      !emailRecord ||
+      (!hasExplicitCorrection && (!emailRecord.hasTypo || !emailRecord.typoSuggestion))
+    ) {
       throw new Error('Typo candidate was not found');
     }
 
@@ -1031,12 +1035,18 @@ export class EmailsService {
         throw new Error('Resolved email is not valid enough to accept');
       }
 
+      if (resolvedEmail === this.normalizeEmail(emailRecord.email)) {
+        throw new Error('Corrected email must be different from the original email');
+      }
+
       const filterResult = this.filterValidator.validate(resolvedEmail);
       if (filterResult.hasSuggestedCorrection) {
         throw new Error('Resolved email still looks like a typo');
       }
 
       const updateData = {
+        hasTypo: true,
+        typoSuggestion: resolvedEmail,
         typoResolutionStatus: 'accepted' as TypoResolutionStatus,
         typoResolvedEmail: resolvedEmail,
         typoResolvedAt: now,

@@ -267,6 +267,41 @@
   overflow-wrap: anywhere;
 }
 
+.recoverable-audit__suggestion {
+  display: grid;
+  gap: 0.15rem;
+  margin-top: 0.55rem;
+  padding: 0.55rem 0.65rem;
+  color: #115e59;
+  background: #f0fdfa;
+  border-left: 3px solid #14b8a6;
+
+  span {
+    color: var(--color-muted);
+    font-size: 0.7rem;
+    font-weight: 850;
+    text-transform: uppercase;
+  }
+
+  strong {
+    overflow-wrap: anywhere;
+  }
+}
+
+.recoverable-audit__suggestion--missing {
+  color: #92400e;
+  background: #fffbeb;
+  border-left-color: #f59e0b;
+  font-weight: 800;
+}
+
+.recoverable-audit__repair-editor {
+  display: grid;
+  gap: 0.5rem;
+  min-width: 300px;
+  margin-top: 0.65rem;
+}
+
 .recoverable-audit__loading {
   min-height: 170px;
 }

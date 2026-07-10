@@ -14,6 +14,7 @@ import { SendEligibilityService } from '@modules/emails/services/send-eligibilit
 import { ValidationIntakeGateService } from '@modules/email-verification/services/validation-intake-gate.service';
 import { ImportSourceType, ImportJobSourceType, ImportJobStatus } from '@shared/enums/import-source.enum';
 import { VerificationStatus } from '@shared/enums/verification-status.enum';
+import { SendEligibility } from '@shared/enums/email-validation.enum';
 import { ImportJob } from '../entities/import-job.entity';
 import { SyncState } from '../entities/sync-state.entity';
 
@@ -83,7 +84,11 @@ export interface RecoverableMissingEmailRow {
   candidateOrdersForPhone: number;
   alreadyRecovered: boolean;
   candidateEmailInList: boolean;
+  candidateEmailId?: number | null;
   candidateEmailStatus: string | null;
+  candidateHasTypo?: boolean;
+  candidateTypoSuggestion?: string | null;
+  candidateTypoResolvedEmail?: string | null;
   candidateSendEligibility?: string | null;
   candidateDoNotSendReason?: string | null;
   candidateAcquisitionSource?: string | null;
@@ -1361,7 +1366,9 @@ export class InventoryPalImportService {
     const recoveredSourceIdentifiers = new Set(
       recoveredSources.map((source) => source.sourceIdentifier).filter(Boolean),
     );
-    const existingEmailsByAddress = new Map(existingEmails.map((email) => [email.email, email]));
+    const existingEmailsByAddress = new Map(
+      existingEmails.map((email) => [email.email.trim().toLowerCase(), email]),
+    );
 
     const rows = mappedRows.map((row) => {
       const candidateEmail = row.candidateEmail?.trim().toLowerCase();
@@ -1376,7 +1383,11 @@ export class InventoryPalImportService {
       return {
         ...row,
         candidateEmailInList: Boolean(existingEmail),
+        candidateEmailId: existingEmail ? Number(existingEmail.id) : null,
         candidateEmailStatus: existingEmail?.verificationStatus || null,
+        candidateHasTypo: Boolean(existingEmail?.hasTypo),
+        candidateTypoSuggestion: existingEmail?.typoSuggestion || null,
+        candidateTypoResolvedEmail: existingEmail?.typoResolvedEmail || null,
         candidateSendEligibility: existingEmail?.sendEligibility || null,
         candidateDoNotSendReason: existingEmail?.doNotSendReason || null,
         candidateAcquisitionSource: existingEmail?.acquisitionSource || null,
@@ -1454,6 +1465,13 @@ export class InventoryPalImportService {
   ): boolean {
     if (!email || isManualIgnored) {
       return false;
+    }
+
+    if (
+      email.sendEligibility === SendEligibility.REVIEW &&
+      email.doNotSendReason === 'typo_accepted_external_validation_required'
+    ) {
+      return true;
     }
 
     if (email.verificationStatus !== VerificationStatus.INVALID) {
@@ -1539,7 +1557,11 @@ export class InventoryPalImportService {
       candidateOrdersForPhone: Number(row.candidateOrdersForPhone || 1),
       alreadyRecovered: Boolean(row.alreadyRecovered),
       candidateEmailInList: Boolean(row.candidateEmailInList),
+      candidateEmailId: row.candidateEmailId ? Number(row.candidateEmailId) : null,
       candidateEmailStatus: row.candidateEmailStatus || null,
+      candidateHasTypo: Boolean(row.candidateHasTypo),
+      candidateTypoSuggestion: row.candidateTypoSuggestion || null,
+      candidateTypoResolvedEmail: row.candidateTypoResolvedEmail || null,
     }));
   }
 

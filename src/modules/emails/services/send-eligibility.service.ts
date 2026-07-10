@@ -43,10 +43,10 @@ export class SendEligibilityService {
       return this.doNotSend('unsubscribed');
     }
 
-    if (input.gmailCategory === 'abuse' || input.verificationStatus === VerificationStatus.RISKY) {
+    if (input.gmailCategory === 'abuse') {
       return {
         sendEligibility: SendEligibility.REVIEW,
-        doNotSendReason: input.gmailCategory === 'abuse' ? 'abuse_detected' : 'risky',
+        doNotSendReason: 'abuse_detected',
       };
     }
 
@@ -61,6 +61,13 @@ export class SendEligibilityService {
           input.typoResolutionStatus === 'accepted'
             ? 'typo_accepted_external_validation_required'
             : 'typo_pending',
+      };
+    }
+
+    if (input.verificationStatus === VerificationStatus.RISKY) {
+      return {
+        sendEligibility: SendEligibility.REVIEW,
+        doNotSendReason: 'risky',
       };
     }
 

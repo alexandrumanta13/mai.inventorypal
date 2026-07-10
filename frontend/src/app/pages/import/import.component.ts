@@ -57,7 +57,11 @@ interface RecoverableMissingEmailRow {
   candidateOrdersForPhone: number;
   alreadyRecovered: boolean;
   candidateEmailInList: boolean;
+  candidateEmailId?: number | null;
   candidateEmailStatus: string | null;
+  candidateHasTypo?: boolean;
+  candidateTypoSuggestion?: string | null;
+  candidateTypoResolvedEmail?: string | null;
   candidateSendEligibility?: string | null;
   candidateDoNotSendReason?: string | null;
   candidateAcquisitionSource?: string | null;
@@ -143,6 +147,8 @@ export class ImportComponent implements OnInit {
   recoverableRecoveryLoading = '';
   recoverableRowActionLoading = '';
   recoverableRecoveryResult: RecoverableRecoveryResult | null = null;
+  recoverableEditingOrderId: number | null = null;
+  recoverableCorrection = '';
   actionLoading = '';
   errorMessage = '';
   actionMessage = '';
@@ -504,6 +510,63 @@ export class ImportComponent implements OnInit {
     });
   }
 
+  startRecoverableTypoRepair(row: RecoverableMissingEmailRow) {
+    this.recoverableEditingOrderId = row.orderId;
+    this.recoverableCorrection = row.candidateTypoSuggestion || '';
+    this.errorMessage = '';
+    this.actionMessage = '';
+  }
+
+  cancelRecoverableTypoRepair() {
+    this.recoverableEditingOrderId = null;
+    this.recoverableCorrection = '';
+  }
+
+  saveRecoverableTypoRepair(row: RecoverableMissingEmailRow) {
+    const correctedEmail = this.recoverableCorrection.trim().toLowerCase();
+    if (!row.candidateEmailId) {
+      this.errorMessage = 'The email record is missing from the local list.';
+      return;
+    }
+
+    if (!correctedEmail || !correctedEmail.includes('@')) {
+      this.errorMessage = 'Enter the complete corrected email address.';
+      return;
+    }
+
+    if (correctedEmail === row.candidateEmail.trim().toLowerCase()) {
+      this.errorMessage = 'The correction must be different from the original email.';
+      return;
+    }
+
+    if (!confirm(`Save ${correctedEmail} as the correction for ${row.candidateEmail}? It will require external validation before sending.`)) {
+      return;
+    }
+
+    const actionKey = `repair-${row.orderId}`;
+    this.recoverableRowActionLoading = actionKey;
+    this.errorMessage = '';
+    this.actionMessage = '';
+
+    this.http.patch<any>(`/api/emails/${row.candidateEmailId}/typo-resolution`, {
+      action: 'accept',
+      resolvedEmail: correctedEmail,
+      note: `Manual correction from SuppliKit recovery audit for order ${row.orderId}; original=${row.candidateEmail}`,
+    }).subscribe({
+      next: () => {
+        this.recoverableRowActionLoading = '';
+        this.recoverableEditingOrderId = null;
+        this.recoverableCorrection = '';
+        this.actionMessage = `Saved ${correctedEmail} for external validation.`;
+        this.loadRecoverableAudit();
+      },
+      error: (error) => {
+        this.errorMessage = error?.error?.message || 'The typo correction could not be saved.';
+        this.recoverableRowActionLoading = '';
+      }
+    });
+  }
+
   getRunningJobs(): number {
     return this.jobs.filter((job) => ['pending', 'running'].includes(job.status)).length;
   }
@@ -628,7 +691,7 @@ export class ImportComponent implements OnInit {
       );
   }
 
-  private isExternalValidationRecoverableRow(row: RecoverableMissingEmailRow): boolean {
+  isExternalValidationRecoverableRow(row: RecoverableMissingEmailRow): boolean {
     return Boolean(row.candidateNeedsExternalValidation);
   }
 
