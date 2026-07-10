@@ -4,22 +4,13 @@
       <span class="ui-kicker">Quality gate</span>
       <h1 class="ui-title">Validation</h1>
       <p class="ui-subtitle">
-        Central intake state for SuppliKit auto-add, internal verification, typo recovery and NeverBounce cleanup.
+        Central intake state for SuppliKit auto-add, internal verification, typo recovery and ZeroBounce cleanup.
       </p>
       <p class="verification-page__updated" *ngIf="lastUpdated">Last refreshed {{ lastUpdated | date:'shortTime' }}</p>
     </div>
 
     <div class="ui-hero-actions">
-      <button class="ui-button" type="button" (click)="loadValidation()" [disabled]="loading">Refresh</button>
-      <button
-        class="ui-button ui-button--primary"
-        type="button"
-        (click)="startPendingValidation()"
-        [disabled]="actionLoading !== '' || overview.totals.pendingValidation === 0"
-      >
-        <span class="ui-spinner ui-spinner--button" *ngIf="actionLoading === 'validation'" aria-hidden="true"></span>
-        Validate pending
-      </button>
+      <button class="ui-button" type="button" (click)="reloadDashboard()" [disabled]="loading">Reload dashboard</button>
     </div>
   </header>
 
@@ -63,7 +54,7 @@
     <nav class="verification-workflow" aria-label="Validation workflow">
       <button type="button" [class.is-active]="activeView === 'gate'" (click)="setActiveView('gate')">
         <span>Gate</span>
-        <strong>{{ overview.totals.pendingValidation + overview.totals.riskyOrReview | number }}</strong>
+        <strong>{{ getGateWorkflowCount() | number }}</strong>
       </button>
       <button type="button" [class.is-active]="activeView === 'recovery'" (click)="setActiveView('recovery')">
         <span>Recovery</span>
@@ -85,7 +76,7 @@
         <div class="ui-card__header">
           <div>
             <h2 class="ui-card__title">Intake gate</h2>
-            <p class="ui-card__subtitle">SuppliKit accepted emails are queued before send eligibility</p>
+            <p class="ui-card__subtitle">Emails accepted into the system before final send eligibility</p>
           </div>
           <span class="ui-badge ui-badge--success">Connected</span>
         </div>
@@ -149,7 +140,16 @@
               <span>Skip SMTP</span>
             </label>
             <button class="ui-button" type="button" (click)="refreshQueue()" [disabled]="actionLoading !== ''">
-              Refresh queue
+              Reload queue
+            </button>
+            <button
+              class="ui-button ui-button--primary"
+              type="button"
+              (click)="startPendingValidation()"
+              [disabled]="actionLoading !== '' || overview.totals.pendingValidation === 0"
+            >
+              <span class="ui-spinner ui-spinner--button" *ngIf="actionLoading === 'validation'" aria-hidden="true"></span>
+              Validate pending
             </button>
           </div>
         </div>
@@ -419,7 +419,17 @@
                 [disabled]="actionLoading !== '' || editingBounceId === candidate.id"
               >
                 <span class="ui-spinner ui-spinner--button" *ngIf="actionLoading === 'bounce-approve-' + candidate.id" aria-hidden="true"></span>
-                Approve + validate
+                Approve suggestion
+              </button>
+              <button
+                class="ui-button ui-button--sm"
+                type="button"
+                *ngIf="candidate.status === 'pending'"
+                (click)="takeOriginalBounceCandidate(candidate)"
+                [disabled]="actionLoading !== '' || editingBounceId === candidate.id"
+              >
+                <span class="ui-spinner ui-spinner--button" *ngIf="actionLoading === 'bounce-original-' + candidate.id" aria-hidden="true"></span>
+                Take original
               </button>
               <button
                 class="ui-button ui-button--sm"
@@ -465,16 +475,21 @@
     <article class="ui-card verification-zerobounce" *ngIf="activeView === 'external'">
       <div class="ui-card__header">
         <div>
-          <h2 class="ui-card__title">ZeroBounce API validation</h2>
-          <p class="ui-card__subtitle">Direct validation for recovered and risky email batches</p>
+          <h2 class="ui-card__title">ZeroBounce API</h2>
+          <p class="ui-card__subtitle">Credit-based validation batches with stored submitted rows and responses</p>
         </div>
-        <span
-          class="ui-badge"
-          [class.ui-badge--success]="zeroBounceCredits.configured && zeroBounceCredits.validKey !== false"
-          [class.ui-badge--pending]="!zeroBounceCredits.configured || zeroBounceCredits.validKey === false"
-        >
-          {{ zeroBounceCredits.configured ? (zeroBounceCredits.credits === null ? 'Configured' : ((zeroBounceCredits.credits | number) + ' credits')) : 'Needs API key' }}
-        </span>
+        <div class="verification-card-actions">
+          <button class="ui-button ui-button--sm" type="button" (click)="toggleManualExternalFlow()">
+            {{ showManualExternalFlow ? 'Hide CSV fallback' : 'CSV fallback' }}
+          </button>
+          <span
+            class="ui-badge"
+            [class.ui-badge--success]="zeroBounceCredits.configured && zeroBounceCredits.validKey !== false"
+            [class.ui-badge--pending]="!zeroBounceCredits.configured || zeroBounceCredits.validKey === false"
+          >
+            {{ zeroBounceCredits.configured ? (zeroBounceCredits.credits === null ? 'Configured' : ((zeroBounceCredits.credits | number) + ' credits')) : 'Needs API key' }}
+          </span>
+        </div>
       </div>
 
       <div class="ui-card__body">
@@ -482,8 +497,8 @@
           <label class="ui-field">
             <span class="ui-label">Segment</span>
             <select class="ui-select" [(ngModel)]="zeroBounceSegment" (change)="zeroBouncePreview = null; zeroBounceRunResult = null">
-              <option value="smtp_failed_internal">SMTP failed internally</option>
-              <option value="typo_resolved">Resolved typo recovery</option>
+              <option value="smtp_failed_internal">Internal SMTP failed</option>
+              <option value="typo_resolved">Recovered typo emails</option>
               <option value="external_review">External review queue</option>
             </select>
           </label>
@@ -496,11 +511,11 @@
           <div class="verification-zerobounce__actions">
             <button class="ui-button" type="button" (click)="refreshZeroBounceCredits()" [disabled]="zeroBounceLoading !== ''">
               <span class="ui-spinner ui-spinner--button" *ngIf="zeroBounceLoading === 'credits'" aria-hidden="true"></span>
-              Credits
+              Check credits
             </button>
             <button class="ui-button" type="button" (click)="previewZeroBounceSegment()" [disabled]="zeroBounceLoading !== ''">
               <span class="ui-spinner ui-spinner--button" *ngIf="zeroBounceLoading === 'preview'" aria-hidden="true"></span>
-              Preview
+              Preview batch
             </button>
             <button
               class="ui-button ui-button--primary"
@@ -509,7 +524,7 @@
               [disabled]="zeroBounceLoading !== '' || !zeroBouncePreview?.rows?.length || !zeroBounceCredits.configured || zeroBounceCredits.validKey === false"
             >
               <span class="ui-spinner ui-spinner--button" *ngIf="zeroBounceLoading === 'run'" aria-hidden="true"></span>
-              Validate with ZeroBounce
+              Run ZeroBounce
             </button>
           </div>
         </div>
@@ -567,7 +582,7 @@
 
         <div class="verification-batch-audit" *ngIf="externalBatchAudit.length > 0">
           <div class="verification-batch-audit__header">
-            <h3>External validation audit</h3>
+            <h3>ZeroBounce audit</h3>
             <button class="ui-button ui-button--sm" type="button" (click)="refreshExternalValidationAudit()" [disabled]="zeroBounceLoading !== ''">
               Refresh audit
             </button>
@@ -576,7 +591,7 @@
           <div class="verification-batch-audit__item" *ngFor="let batch of externalBatchAudit">
             <div class="verification-batch-audit__title">
               <div>
-                <strong>#{{ batch.id }} {{ formatMapLabel(batch.provider) }}</strong>
+                <strong>#{{ batch.id }} {{ getZeroBounceBatchTitle(batch) }}</strong>
                 <small>{{ formatMapLabel(batch.sourceSegment) }} · {{ batch.createdAt | date:'short' }}</small>
               </div>
               <span
@@ -603,6 +618,10 @@
               <div>
                 <span>Invalid</span>
                 <strong>{{ batch.invalidCount | number }}</strong>
+              </div>
+              <div>
+                <span>Unknown</span>
+                <strong>{{ batch.unknownCount | number }}</strong>
               </div>
               <div>
                 <span>Credits before</span>
@@ -647,14 +666,17 @@
             </div>
           </div>
         </div>
+        <div class="ui-empty" *ngIf="externalBatchAudit.length === 0">
+          No ZeroBounce batches stored yet.
+        </div>
       </div>
     </article>
 
-    <article class="ui-card verification-recovery-export" *ngIf="activeView === 'external'">
+    <article class="ui-card verification-recovery-export" *ngIf="activeView === 'external' && showManualExternalFlow">
       <div class="ui-card__header">
         <div>
-          <h2 class="ui-card__title">Recovery external validation export</h2>
-          <p class="ui-card__subtitle">CSV-first flow for recovered typo emails before ZeroBounce/NeverBounce import</p>
+          <h2 class="ui-card__title">Manual CSV fallback</h2>
+          <p class="ui-card__subtitle">Export recovered typo emails and import provider results when API flow is not used</p>
         </div>
         <span class="ui-badge ui-badge--pending">External check</span>
       </div>

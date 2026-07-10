@@ -285,6 +285,7 @@ export class VerificationComponent implements OnInit {
   zeroBounceRunResult: ZeroBounceRunResult | null = null;
   zeroBounceLoading = '';
   externalBatchAudit: ExternalValidationBatchAudit[] = [];
+  showManualExternalFlow = false;
   validationLimit = 1000;
   skipSmtp = false;
   suppressionOverview: SuppressionOverview = this.createEmptySuppressionOverview();
@@ -341,7 +342,15 @@ export class VerificationComponent implements OnInit {
     });
   }
 
+  reloadDashboard() {
+    this.loadValidation();
+  }
+
   startPendingValidation() {
+    if (!confirm(`Queue up to ${Number(this.validationLimit) || 1000} pending emails for internal validation?`)) {
+      return;
+    }
+
     this.actionLoading = 'validation';
     this.actionMessage = '';
     this.errorMessage = '';
@@ -353,6 +362,7 @@ export class VerificationComponent implements OnInit {
       next: (response) => {
         this.actionMessage = `Queued ${response.jobsAdded || 0} pending emails for validation.`;
         this.actionLoading = '';
+        this.gateDetailsLoaded = false;
         this.loadValidation();
       },
       error: () => {
@@ -435,6 +445,40 @@ export class VerificationComponent implements OnInit {
       },
       error: () => {
         this.errorMessage = `Could not approve candidate #${candidate.id}.`;
+        this.actionLoading = '';
+      }
+    });
+  }
+
+  takeOriginalBounceCandidate(candidate: BounceRecoveryCandidate) {
+    if (!confirm(`Keep ${candidate.bouncedEmail} as the recovery email and send it to the external validation queue?`)) {
+      return;
+    }
+
+    this.actionLoading = `bounce-original-${candidate.id}`;
+    this.actionMessage = '';
+    this.errorMessage = '';
+
+    this.http.post<any>(`/api/verification/bounce-recovery/${candidate.id}/take-original`, {
+      note: 'Manual take-original decision from Bounce recovery UI',
+    }).subscribe({
+      next: (response) => {
+        if (!response.result?.approved) {
+          this.errorMessage = response.result?.reason || `Could not take original for candidate #${candidate.id}.`;
+          this.actionLoading = '';
+          return;
+        }
+
+        const external = response.result?.externalValidationRequired
+          ? 'Added to external validation queue.'
+          : 'Kept protected status; not queued for external validation.';
+        this.actionMessage = `Accepted original ${response.result.originalEmail}. ${external}`;
+        this.actionLoading = '';
+        this.refreshBounceRecovery();
+        this.externalLoaded = false;
+      },
+      error: (error) => {
+        this.errorMessage = error?.error?.message || `Could not take original for candidate #${candidate.id}.`;
         this.actionLoading = '';
       }
     });
@@ -609,6 +653,10 @@ export class VerificationComponent implements OnInit {
     this.loadExternalValidationData(true);
   }
 
+  toggleManualExternalFlow() {
+    this.showManualExternalFlow = !this.showManualExternalFlow;
+  }
+
   previewZeroBounceSegment() {
     this.zeroBounceLoading = 'preview';
     this.zeroBounceRunResult = null;
@@ -644,7 +692,7 @@ export class VerificationComponent implements OnInit {
       return;
     }
 
-    if (!confirm(`Validate ${this.zeroBouncePreview.rows.length} emails with ZeroBounce API?`)) {
+    if (!confirm(`Validate ${this.zeroBouncePreview.rows.length} emails with ZeroBounce API? This consumes ZeroBounce credits and stores an audit batch before applying results.`)) {
       return;
     }
 
@@ -717,6 +765,10 @@ export class VerificationComponent implements OnInit {
     }
 
     return Math.min(100, Math.round(((this.queue.waiting + this.queue.active) / total) * 100));
+  }
+
+  getGateWorkflowCount(): number {
+    return Number(this.overview.totals.pendingValidation || 0);
   }
 
   getTypoScanLabel(): string {
@@ -817,6 +869,14 @@ export class VerificationComponent implements OnInit {
 
   getZeroBounceStatusRows(): Array<{ key: string; count: number }> {
     return this.toMapRows(this.zeroBounceRunResult?.importResult?.byMappedStatus || {}, 8);
+  }
+
+  getZeroBounceBatchTitle(batch: ExternalValidationBatchAudit): string {
+    if (batch.name) {
+      return batch.name;
+    }
+
+    return `ZeroBounce ${this.formatMapLabel(batch.sourceSegment)}`;
   }
 
   getBatchStatusRows(batch: ExternalValidationBatchAudit): Array<{ key: string; count: number }> {
@@ -1026,7 +1086,7 @@ export class VerificationComponent implements OnInit {
         catchError(() => of({ result: this.zeroBounceCredits })),
       ),
       externalBatchAudit: this.http.get<any>('/api/verification/external-validation-batches', {
-        params: { limit: '5' },
+        params: { provider: 'zerobounce', limit: '10' },
       }).pipe(
         catchError(() => of({ result: [] })),
       ),

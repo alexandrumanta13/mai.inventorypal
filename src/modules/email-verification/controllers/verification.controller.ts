@@ -124,6 +124,17 @@ export class VerificationController {
     };
   }
 
+  @Post('bounce-recovery/:id/take-original')
+  async takeOriginalBounceRecoveryCandidate(
+    @Param('id', ParseIntPipe) id: number,
+    @Body('note') note?: string,
+  ) {
+    return {
+      success: true,
+      result: await this.bounceRecoveryService.takeOriginalCandidate(id, note),
+    };
+  }
+
   @Post('bounce-recovery/:id/suggestion')
   async updateBounceRecoverySuggestion(
     @Param('id', ParseIntPipe) id: number,

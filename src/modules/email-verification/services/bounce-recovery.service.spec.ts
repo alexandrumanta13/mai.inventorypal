@@ -289,6 +289,117 @@ describe('BounceRecoveryService', () => {
     });
   });
 
+  it('accepts the bounced original as a recovery decision for external validation', async () => {
+    bounceRecoveryRepository.findOne.mockResolvedValueOnce({
+      id: 45,
+      bouncedEmail: 'petroimary82@gmail.com',
+      suggestedEmail: 'petroimaria@gmail.com',
+      reason: BounceRecoveryReason.NAME_LOCALPART_TYPO,
+      status: BounceRecoveryStatus.PENDING,
+      customerId: 21,
+      customer: {
+        first_name: 'Maria',
+        last_name: 'Petroi',
+      },
+      metadata: {},
+    });
+    emailRepository.findOne
+      .mockResolvedValueOnce({
+        id: 77,
+        email: 'petroimary82@gmail.com',
+        verificationStatus: VerificationStatus.INVALID,
+        qualityScore: 0,
+        gmailCategory: null,
+      })
+      .mockResolvedValueOnce({
+        id: 77,
+        email: 'petroimary82@gmail.com',
+      });
+
+    const result = await service.takeOriginalCandidate(45, 'manual original decision');
+
+    expect(emailRepository.update).toHaveBeenCalledWith(
+      77,
+      expect.objectContaining({
+        email: 'petroimary82@gmail.com',
+        hasTypo: true,
+        typoSuggestion: 'petroimaria@gmail.com',
+        typoResolutionStatus: 'accepted',
+        typoResolvedEmail: 'petroimary82@gmail.com',
+        smtpErrorMessage: 'Bounce recovery original accepted; external validation required before marketing sends',
+      }),
+    );
+    expect(sendEligibilityService.buildUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        verificationStatus: VerificationStatus.PENDING,
+        hasTypo: true,
+        typoResolutionStatus: 'accepted',
+      }),
+      ExternalValidationProvider.MANUAL,
+    );
+    expect(verificationQueue.add).not.toHaveBeenCalled();
+    expect(bounceRecoveryRepository.update).toHaveBeenCalledWith(
+      45,
+      expect.objectContaining({
+        status: BounceRecoveryStatus.APPROVED,
+        note: 'manual original decision',
+        metadata: expect.objectContaining({
+          approvedEmailId: 77,
+          originalEmailAccepted: true,
+          previousSuggestedEmail: 'petroimaria@gmail.com',
+          externalValidationRequired: true,
+        }),
+      }),
+    );
+    expect(result).toMatchObject({
+      approved: true,
+      originalEmail: 'petroimary82@gmail.com',
+      emailId: 77,
+      validationQueued: false,
+      externalValidationRequired: true,
+    });
+  });
+
+  it('does not reopen protected original emails when taking original', async () => {
+    bounceRecoveryRepository.findOne.mockResolvedValueOnce({
+      id: 46,
+      bouncedEmail: 'blocked@gmail.com',
+      suggestedEmail: 'blocker@gmail.com',
+      reason: BounceRecoveryReason.NAME_LOCALPART_TYPO,
+      status: BounceRecoveryStatus.PENDING,
+      metadata: {},
+    });
+    emailRepository.findOne.mockResolvedValueOnce({
+      id: 78,
+      email: 'blocked@gmail.com',
+      verificationStatus: VerificationStatus.UNSUBSCRIBED,
+    });
+
+    const result = await service.takeOriginalCandidate(46);
+
+    expect(emailRepository.update).not.toHaveBeenCalled();
+    expect(emailRepository.create).not.toHaveBeenCalled();
+    expect(bounceRecoveryRepository.update).toHaveBeenCalledWith(
+      46,
+      expect.objectContaining({
+        status: BounceRecoveryStatus.APPROVED,
+        metadata: expect.objectContaining({
+          approvedEmailId: 78,
+          originalEmailAccepted: true,
+          protectedOriginalStatus: VerificationStatus.UNSUBSCRIBED,
+          externalValidationRequired: false,
+        }),
+      }),
+    );
+    expect(result).toMatchObject({
+      approved: true,
+      originalEmail: 'blocked@gmail.com',
+      emailId: 78,
+      externalValidationRequired: false,
+      protectedOriginalStatus: VerificationStatus.UNSUBSCRIBED,
+    });
+  });
+
   it('updates a pending bounce recovery suggestion with audit metadata', async () => {
     bounceRecoveryRepository.findOne
       .mockResolvedValueOnce({

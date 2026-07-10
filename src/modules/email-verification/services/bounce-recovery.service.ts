@@ -385,6 +385,102 @@ export class BounceRecoveryService {
     };
   }
 
+  async takeOriginalCandidate(id: number, note?: string) {
+    const candidate = await this.bounceRecoveryRepository.findOne({
+      where: { id, status: BounceRecoveryStatus.PENDING },
+      relations: ['customer'],
+    });
+
+    if (!candidate) {
+      return {
+        approved: false,
+        reason: 'Candidate not found or already resolved',
+      };
+    }
+
+    const originalEmail = this.normalizeEmail(candidate.bouncedEmail);
+    if (!originalEmail || !validateEmail(originalEmail)) {
+      return {
+        approved: false,
+        reason: 'Original email is not valid',
+      };
+    }
+
+    const existing = await this.emailRepository.findOne({ where: { email: originalEmail } });
+    const protectedStatus = existing
+      ? [
+          VerificationStatus.DISPOSABLE,
+          VerificationStatus.UNSUBSCRIBED,
+        ].includes(existing.verificationStatus)
+      : false;
+
+    let emailRecord = existing;
+    if (!protectedStatus) {
+      const emailDomain = originalEmail.split('@')[1] || null;
+      const updateData = {
+        email: originalEmail,
+        emailDomain,
+        customerId: candidate.customerId || existing?.customerId || null,
+        firstName: existing?.firstName || candidate.customer?.first_name || candidate.metadata?.firstName || null,
+        lastName: existing?.lastName || candidate.customer?.last_name || candidate.metadata?.lastName || null,
+        fullName: existing?.fullName || candidate.metadata?.fullName || null,
+        acquisitionSource: existing?.acquisitionSource || 'bounce_recovery_original',
+        acquisitionDate: existing?.acquisitionDate || new Date(),
+        verificationStatus: VerificationStatus.PENDING,
+        qualityScore: Math.max(Number(existing?.qualityScore || 0), 50),
+        hasTypo: true,
+        typoSuggestion: candidate.suggestedEmail,
+        typoResolutionStatus: 'accepted' as const,
+        typoResolvedEmail: originalEmail,
+        typoResolvedAt: new Date(),
+        typoResolutionNote: `Bounce recovery original accepted (${candidate.reason}); external validation required before marketing sends`,
+        smtpErrorMessage: 'Bounce recovery original accepted; external validation required before marketing sends',
+        gmailCategory: existing?.gmailCategory || null,
+        hasValidSyntax: existing?.hasValidSyntax ?? true,
+        hasValidDns: existing?.hasValidDns ?? null,
+        hasValidSmtp: existing?.hasValidSmtp ?? null,
+        ...this.sendEligibilityService.buildUpdate({
+          verificationStatus: VerificationStatus.PENDING,
+          qualityScore: Math.max(Number(existing?.qualityScore || 0), 50),
+          hasTypo: true,
+          typoResolutionStatus: 'accepted',
+          gmailCategory: existing?.gmailCategory,
+        }, ExternalValidationProvider.MANUAL),
+      };
+
+      if (existing) {
+        await this.emailRepository.update(existing.id, updateData);
+        emailRecord = await this.emailRepository.findOne({ where: { id: existing.id } });
+      } else {
+        emailRecord = await this.emailRepository.save(this.emailRepository.create(updateData));
+      }
+    }
+
+    await this.bounceRecoveryRepository.update(candidate.id, {
+      status: BounceRecoveryStatus.APPROVED,
+      note: note || null,
+      resolvedAt: new Date(),
+      metadata: {
+        ...(candidate.metadata || {}),
+        approvedEmailId: emailRecord?.id || null,
+        originalEmailAccepted: true,
+        previousSuggestedEmail: candidate.suggestedEmail,
+        protectedOriginalStatus: protectedStatus ? existing?.verificationStatus : null,
+        validationQueued: false,
+        externalValidationRequired: !protectedStatus,
+      },
+    });
+
+    return {
+      approved: true,
+      originalEmail,
+      emailId: emailRecord?.id || null,
+      validationQueued: false,
+      externalValidationRequired: !protectedStatus,
+      protectedOriginalStatus: protectedStatus ? existing?.verificationStatus : null,
+    };
+  }
+
   async updateSuggestion(id: number, suggestedEmail: string, note?: string) {
     const candidate = await this.bounceRecoveryRepository.findOne({
       where: { id, status: BounceRecoveryStatus.PENDING },
