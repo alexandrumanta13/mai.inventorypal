@@ -98,6 +98,25 @@ describe('ZeroBounceValidationService', () => {
     expect(result.estimatedCredits).toBe(100);
   });
 
+  it('does not preview emails that already have a ZeroBounce audit event', async () => {
+    const query = createQueryBuilderMock({
+      count: 0,
+      rows: [],
+    });
+    emailRepository.createQueryBuilder.mockReturnValue(query);
+    configService.get.mockReturnValue(undefined);
+
+    await service.previewSegment({
+      segment: 'smtp_failed_internal',
+      limit: 10,
+      includeCredits: false,
+    });
+
+    expect(query.andWhere).toHaveBeenCalledWith(
+      expect.stringContaining('email_validation_events zeroBounceEvent'),
+    );
+  });
+
   it('excludes a candidate from external validation with an audit event', async () => {
     emailRepository.findOne.mockResolvedValueOnce({
       id: 456,

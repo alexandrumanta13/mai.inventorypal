@@ -341,6 +341,14 @@ export class ZeroBounceValidationService {
       .andWhere('(email.lastValidationSource IS NULL OR email.lastValidationSource != :zerobounce)', {
         zerobounce: ExternalValidationProvider.ZEROBOUNCE,
       })
+      .andWhere(
+        `NOT EXISTS (
+          SELECT 1
+          FROM email_validation_events zeroBounceEvent
+          WHERE zeroBounceEvent.emailId = email.id
+            AND zeroBounceEvent.provider = :zerobounce
+        )`,
+      )
       .orderBy('email.updatedAt', 'DESC')
       .addOrderBy('email.id', 'DESC');
 
